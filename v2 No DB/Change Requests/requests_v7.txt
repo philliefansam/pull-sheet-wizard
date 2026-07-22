@@ -1,0 +1,10 @@
+## Changes to make
+
+-add selected grain direction to all materials being layed up (the non stock materials)
+
+-ensure materials_summary dimensions are properly translated to the pull sheet output
+	--i encountered some materials where the adjusted dims dont match what gets put on the pull sheet
+
+-on the pull sheets, if a material is named 3-4 Raw Ply and you mark 3/4", remove the "3-4" or similar from the materials title
+
+-on the pull sheet, if a material is not an exact footage i.e. 61"x121" and 60"x120" are 5'x10', ensure inches are used so the lay up man knows the proper size

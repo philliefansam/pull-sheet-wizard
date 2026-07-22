@@ -1,0 +1,65 @@
+; (Program: R230701N)
+; (Program index: 1)
+; (Output on 17 MAR 26 - 09:19 from Intelli-CAM macro)
+; (Material name: 1/2 Raw MDF (0.50))
+; (Material is face dependent: 0)
+; (Material machined face side up: 1)
+; (Texture facing up during machining: Blank)
+; (Texture facing down during machining: Blank)
+; (Work dimension on X-axis: 23)
+; (Work dimension on Y-axis: 17.5)
+; (Work dimension on Z-axis: 0.5)
+;MAKROTYP=0
+;BILD=R230701N.wmf
+;INFO=
+;WZGV=7123K_178
+;MASCHINE=HOLZHER
+;NCNAME=R230701N
+;KOMMENTAR=
+;DX=0.000
+;DY=0.000
+;DZ=0
+;DIALOGDLL=Dialoge.Dll
+;DIALOGPROC=StandardFormAnzeigen
+;AUTOSCRIPTSTART=1
+;BUTTONBILD=
+;DIMENSION_UNIT = 1
+VARS
+   DX := 23;*VAR*Dimension X
+   DY := 17.5;*VAR*Dimension Y
+   DZ := 0.5;*VAR*Dimension Z
+START
+FINISHEDPART (DX,DY,DZ,0,0,0,0,0,'1/2 Raw MDF (0.50)',0,0,3)
+CALL HH_PARK (VAL PARK:=1,X:=0,Y:=0)
+TOOLD (501,_VE,_V,_VA,_SD,_ANF,'1')	
+DRILLING (2.9688,1.6875,0.197,0.4375,10,0,0,0,1,0,0,0)
+DRILLING (2.9688,1.6875,0.197,0.4375,0,0,0,0,1,0,0,0)
+DRILLING (2.9688,16.0625,0.197,0.4375,0,0,0,0,1,0,0,0)
+TOOLM (6,300,700,700,16000,_ANF,'1') 
+SP (5.5937,7.5625,0.75,2,0,_ANF,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0)
+G01 (5.5937,8.875,0.0938,0,0,1)
+G01 (5.5937,17.25,0.0938,0,0,1)
+G01 (0.3437,17.25,0.0938,0,0,1)
+G01 (0.3438,0.5,0.0938,0,0,1)
+G01 (5.5938,0.5,0.0938,0,0,1)
+G01 (5.5937,8.875,0.0938,0,0,1)
+G01 (5.5937,9.25,0.0938,0,0,1)
+G01 (5.5937,10.5625,0.75,0,0,1)
+EP (0,_ANF,0)
+SP (4.6537,17.25,0.75,2,0,_ANF,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0)
+G01 (3.2062,17.25,-0.005,0,0,1)
+G01 (0.3437,17.25,-0.005,0,0,1)
+G01 (0.3438,0.5,-0.005,0,0,1)
+G01 (5.5938,0.5,-0.005,0,0,1)
+G01 (5.5937,9.35,-0.005,0,0,1)
+G01 (6,9.35,-0.005,0,0,1)
+G01 (6,0.25,-0.005,0,0,1)
+G01 (22.75,0.25,-0.005,0,0,1)
+G01 (22.75,17.25,-0.005,0,0,1)
+G01 (6,17.25,-0.005,0,0,1)
+G01 (6,8.4,-0.005,0,0,1)
+G01 (5.5937,8.4,-0.005,0,0,1)
+G01 (5.5937,17.25,-0.005,0,0,1)
+G01 (2.7312,17.25,-0.005,0,0,1)
+G01 (1.2838,17.25,0.75,0,0,1)
+EP (0,_ANF,0)

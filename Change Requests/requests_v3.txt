@@ -1,0 +1,10 @@
+### Changes to make
+
+-Make a settings page and let the 2" over net size be user controlled with 2" being default (Overcut overage) which controls the final length and width variables
+
+-if net sheet size is within 6" of overall sheet size, keep it the overall size i.e. 58" of a 61" sheet will stay 61"
+	--make this a user controlled setting as well, default 6" (Minimum off cut dim)
+
+-add ability to "add-on" additional nest folder i.e. if im using the beam saw in addition to the main cnc. this will use all same project details. simply add them to the current list of ingested materials.
+
+-change "face veneer/laminate" and "back veneer/laminate" to "face up veneer/laminate" and "face down veneer/laminate"

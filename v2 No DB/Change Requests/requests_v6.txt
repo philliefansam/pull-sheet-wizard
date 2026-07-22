@@ -1,0 +1,10 @@
+### Changes to be made
+
+-add a 3rd grain option
+	--No Grain
+
+-Pull Sheet PDF generated does not match materials_summary, example qty. (5) (5x10) 3-4 Raw Ply sheets appear on pull sheet when materials_summary says 2 60"x120" sheets, 2 44"x120" sheets, and 1 25"x120" sheet.
+	--ensure materials summary is accurately represented on generated pull sheet
+
+-include "Client" user input at top of pull sheet next to "Project Name"
+

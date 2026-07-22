@@ -1,0 +1,9 @@
+### Changes to make
+
+-Examine CNC & Beam Saw Pull sheet parser.md for instructions how to find beam saw raw dimensions
+
+-currently beam saw nests read as "Target Machine: Homag" this is incorrect it should be "Holzher Beam Saw"
+
+-the add on folder function should be possible to add 2 folders and THEN scan server path. let the user paste 2 folders before scanning both then proceeding to the lay up wizard with all material scanned, separated by machine
+
+-in the material_summary table, face_material should be changed to faceUp_matl and backer_material to faceDown_matl adjust any variables accordingly

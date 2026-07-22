@@ -1,0 +1,17 @@
+### Changes to make
+
+-material_summary
+	--every sheet needs its own entry even if duplicate material
+	--add quantity variable, if everything including final sheet size is equal consolidate in one line and use quantity variable
+		--if everything is the same except sheet size then matl needs its own line
+	--also need horizontal scroll bar to see all rows of data
+
+-each material needs a thickness data point as well
+	--we format the thickness into the material folder name
+	--i.e. 1 1-8 is 1 1/8", 3-4 is 3/4", 15-16 is 15/16" etc. parse this to gather that information and make it an editable numerical field
+
+--for each material, add a grain direction drop down and the associated field in the materials_summary table
+	--2 options as follows
+		--Horizontal
+		--Vertical
+	--Horizontal is to be the default

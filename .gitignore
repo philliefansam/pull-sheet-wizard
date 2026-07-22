@@ -1,0 +1,17 @@
+# OS Metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# System logs and temporary files
+*.log
+*.tmp
+*.db-journal
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+
+# Node modules (if added in future)
+node_modules/

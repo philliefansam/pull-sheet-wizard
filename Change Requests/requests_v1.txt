@@ -1,0 +1,15 @@
+### Changes to make:
+-always round up "final_length" and "final_width" to nearest inch if not exactly .00
+
+-if "final_length" and "final_width" are within 6" of overall sheet dims, use full sheet size no offcut
+
+-add substrate selection drop down to each material with the following options
+	--Particle Board (PB)
+	--MDF
+	--Plywood (Ply)
+
+-the above will take the place of the exiting "Core Substrate" text box
+
+-add checkbox for "Raw Material" to each material (next to the new "Core Substrate" dropdown). if checked, the material needs no layup so grey out the "Face Veneer/Laminate" and "Backer Layer" boxes
+
+-Change "Backer Layer" title to "Back Veneer/Laminate"

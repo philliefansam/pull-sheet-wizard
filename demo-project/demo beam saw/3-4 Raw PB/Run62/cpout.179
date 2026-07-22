@@ -1,0 +1,46 @@
+HDR1,179,Mat: 3/4 PB Exact (0.75) - Job: Criteo Corp Recept
+HDR2,Jul 21, 2026,10:26 AM
+HDR3,007153,2.01,CVI ,0031
+CTL1,D,D,N,    1,0
+CTL2,    0.250,    0.250,  145.000,    0.000,    0.000,    0.000
+CTL3,    0.250
+THK1,    0.750,    3.000
+STA1,     2,     3,     0
+STA2,     16.083,      6.688,      0.000
+INV1,  999,    1,   0.0000,   49.000,   97.000,    0.250,    0.375,    0.250,    0.375
+INV2,3/4 PB Exact (0.75)     ,       33.0069,       17.2510,        0.0000
+INV3,                ,                ,2
+ORD1,    1,    1,   47.875,   26.750,H, 
+ORD2,   0.000,                        ,                
+ORD3, 1, 1
+ORD1,    2,    2,   22.495,   26.750,H, 
+ORD2,   0.000,                        ,                
+ORD3, 2, 2
+PRT1,    1, 0,   47.875,   26.750, 1,Mod Panel               ,Criteo Corp-1-10,                ,                
+PRT2, 0,,3/4 PB Exact (0.75),Room 1
+PRT3,0000,        ,                ,        ,        ,                ,        ,        ,                ,        ,        ,                ,        
+PRT4,Storage Cab Shel,   47.875,   28.500,   23.250,Storage cab shell       ,                
+PRT5,H, ,    1,    1
+PRT1,    1, 1,   22.495,   26.750, 1,End Panel               ,Criteo Corp-1-10,                ,                
+PRT2, 0,,3/4 PB Exact (0.75),Room 1
+PRT3,0000,        ,                ,        ,        ,                ,        ,        ,                ,        ,        ,                ,        
+PRT4,Storage Cab Shel,   47.875,   28.500,   23.250,Storage cab shell       ,                
+PRT5,H, ,    1,    1
+PRT1,    1, 1,   22.495,   26.750, 1,End Panel               ,Criteo Corp-1-10,                ,                
+PRT2, 0,,3/4 PB Exact (0.75),Room 1
+PRT3,0000,        ,                ,        ,        ,                ,        ,        ,                ,        ,        ,                ,        
+PRT4,Storage Cab Shel,   47.875,   28.500,   23.250,Storage cab shell       ,                
+PRT5,H, ,    1,    1
+OFF1,    1,   21.250,   96.500
+PAT1,01,L,    1,    1
+PAT2, 52.265,       17.2510,       17.2510,        0.0000,       0.000
+PAT3,    2,    3,    0,    3
+PAT4,     16.083,      6.688,      0.000
+PAT5,     0,     0,       0.000,       0.000
+BCUT
+CUT1,01,   26.750,0,000
+CUT1,02,   47.875,1,001
+CUT1,02,   22.495,1,002
+CUT1,02,   22.495,1,002
+CUT1,01,   21.250,2,001
+END

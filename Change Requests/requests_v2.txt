@@ -1,0 +1,16 @@
+### changes to make
+-auto fill face and back "Veneer/Laminate" boxes in the following format:
+	--1 1-8 BKR-Natural Recon stated matl. name
+		--1 1-8 is material thickness (1" 1/8")
+		--BKR (backer) is face up on the cnc
+		--Natural Recon is face down on the cnc
+	--material faces are listed in order of CNC side up/down as a naming convention
+	--material face up is also found on cut sheets
+		--face up N/A can either mean material is raw substrate only, or 2 sided laminate rendering face up unimportant
+
+-for each material, if there is more than 1 sheet clearly display the quantity
+	-display each sheets' raw sheet and net part bounds numbers
+
+-reference operator name from the user's pc username
+
+-Seperate "project name" into "Client" and "Project Name"
