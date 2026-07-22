@@ -1,4 +1,4 @@
-# Antigravity Application Platform Architecture
+# Corporate Interiors Platform Architecture
 
 ## Objective
 A local desktop application framework designed to scan project directories, orchestrate independent extraction modules (Pull Sheet and Toolpath Bounding Box parsers), handle user lamination routing workflows, and write structured records into a local SQLite database file[cite: 3, 5, 6, 7]. This data layer allows any workstation running LibreOffice Base via ODBC to pull real-time datasets for print report generation.

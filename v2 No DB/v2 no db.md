@@ -1,4 +1,4 @@
-# Antigravity Application Platform: Pull Sheet Generator
+# Corporate Interiors: Pull Sheet Generator
 
 ## Objective
 A browser-based application served by a local PowerShell HTTP listener that scans project directories, parses CNC machine files (`.mpr`, `.hop`, `.cpout`), and aggregates material bounds. The application prompts the operator for lamination routing and natively generates a printable HTML/CSS Pull Sheet.
