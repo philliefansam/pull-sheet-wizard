@@ -1597,7 +1597,10 @@ function renderPullSheetReport() {
   let html = `
     <div class="ps-report-header">
       <div class="ps-header-top">
-        <span>Drawn by: ${operatorName}</span>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <img src="logo.png" alt="Corporate Interiors Logo" style="height: 32px; width: auto; object-fit: contain;">
+          <span>Drawn by: ${operatorName}</span>
+        </div>
         <h2 class="ps-header-title">Pull Sheet</h2>
         <span>${dateProcessed}</span>
       </div>

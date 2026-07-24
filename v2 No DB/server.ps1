@@ -75,6 +75,8 @@ function Serve-File ($context, $filePath) {
         ".css"  { $response.ContentType = "text/css" }
         ".js"   { $response.ContentType = "application/javascript" }
         ".wasm" { $response.ContentType = "application/wasm" }
+        ".png"  { $response.ContentType = "image/png" }
+        ".ico"  { $response.ContentType = "image/x-icon" }
         default { $response.ContentType = "application/octet-stream" }
     }
     
