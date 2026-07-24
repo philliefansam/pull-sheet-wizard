@@ -69,21 +69,3 @@ http://localhost:9990/
 ```
 
 ---
-
-## 🏷️ Version Management & Publishing
-
-To publish new releases to GitHub:
-1. **Commit changes**:
-   ```bash
-   git add .
-   git commit -m "Release description"
-   ```
-2. **Push to main branch**:
-   ```bash
-   git push origin main
-   ```
-3. **Tag a version release**:
-   ```bash
-   git tag -a v2.0.0 -m "Pull Sheet Wizard Version 2.0.0"
-   git push origin v2.0.0
-   ```
