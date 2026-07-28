@@ -507,7 +507,11 @@ function extractMaterialName(relativePath) {
   const parts = relativePath.split('/');
   // Filter out file name (last element) and intermediate subfolders like "Run59" or "Run62"
   const folderParts = parts.slice(0, -1).filter(p => !/^Run\d+$/i.test(p));
-  if (folderParts.length === 0) return 'Unclassified';
+  if (folderParts.length === 0) {
+    const rootParts = (state.pastedPath || '').split(/[\\/]/).filter(Boolean);
+    const rootName = rootParts[rootParts.length - 1] || 'Unclassified';
+    return rootName;
+  }
   
   return folderParts[folderParts.length - 1];
 }
@@ -516,23 +520,24 @@ function extractMaterialName(relativePath) {
 function detectFileMachine(file) {
   const nameLower = file.name.toLowerCase();
   const ext = nameLower.split('.').pop();
-  const relPathLower = file.relativePath.toLowerCase();
+  const relPathLower = (file.relativePath || '').toLowerCase();
+  const fullPathLower = (relPathLower + ' ' + (state.pastedPath || '')).toLowerCase();
   
-  if (nameLower.includes('cpout') || ext === 'cpl' || relPathLower.includes('beam saw') || relPathLower.includes('beamsaw')) {
+  if (nameLower.includes('cpout') || ext === 'cpl' || fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw')) {
     return 'Holzher Beam Saw';
   }
-  if (ext === 'hop' || relPathLower.includes('holzher cnc') || relPathLower.includes('holzher_cnc')) {
+  if (ext === 'hop' || fullPathLower.includes('holzher cnc') || fullPathLower.includes('holzher_cnc')) {
     return 'Holzher CNC';
   }
-  if (ext === 'mpr' || relPathLower.includes('homag')) {
+  if (ext === 'mpr' || fullPathLower.includes('homag')) {
     return 'Homag';
   }
   if (ext === 'txt' || ext === 'pull') {
-    const upperContent = file.content.toUpperCase();
-    if (upperContent.includes('THEN BEAM SAW') || upperContent.includes('BEAM SAW')) {
+    const upperContent = (file.content || '').toUpperCase();
+    if (upperContent.includes('THEN BEAM SAW') || upperContent.includes('BEAM SAW') || fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw')) {
       return 'Holzher Beam Saw';
     }
-    if (upperContent.includes('THEN HOLZHER') || upperContent.includes('HOLZHER CNC') || upperContent.includes('HOLZHER')) {
+    if (upperContent.includes('THEN HOLZHER') || upperContent.includes('HOLZHER CNC') || upperContent.includes('HOLZHER') || fullPathLower.includes('holzher')) {
       return 'Holzher CNC';
     }
   }
@@ -1626,10 +1631,12 @@ function renderPullSheetReport() {
     });
   }
 
-  // Helper to clean leading thickness fraction prefixes from material titles (e.g. "3-4 Raw Ply" -> "Raw Ply")
+  // Helper to clean leading thickness fraction prefixes and trailing machine/nest parenthetical notes from material titles
   function cleanMaterialTitle(name) {
     if (!name) return '';
-    return name.replace(/^(\d+[\s-]+\d+[\s/-]+\d+|\d+[\s/-]+\d+)\s*/i, '').trim();
+    let cleaned = name.replace(/\s*\([^)]*(beam\s*saw|cnc|nest|homag|holzher)[^)]*\)/i, '');
+    cleaned = cleaned.replace(/^(\d+[\s-]+\d+[\s/-]+\d+|\d+[\s/-]+\d+)\s*/i, '').trim();
+    return cleaned || name;
   }
 
   // Format thickness string helper (e.g. 0.75 -> 3/4", 1.125 -> 1-1/8", 0.5 -> 1/2")
