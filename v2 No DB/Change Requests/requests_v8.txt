@@ -1,0 +1,7 @@
+## Changes to make
+
+-add a checkbox to each material "Use Whole Sheets" that forces all sheets of that material to use their full original sheet size.
+
+-on  the pull sheets, amend "If offcut is available" to all custom sized materials (non full size sheets)
+
+-when changing over to the settings or other tabs, in the most efficient way possible temporarily cache all user input and data so they do not have to redo their work.

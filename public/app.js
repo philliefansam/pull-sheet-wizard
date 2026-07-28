@@ -34,6 +34,9 @@ async function initApp() {
   
   // Set up event listeners
   setupEventListeners();
+
+  // Restore session cache if present
+  restoreSessionCache();
   
   // Check backend server connection
   await checkServerConnection();
@@ -52,7 +55,7 @@ async function checkServerConnection() {
       statusEl.querySelector('.indicator-text').textContent = 'Server Connected';
       
       const data = await res.json();
-      if (data.username) {
+      if (data.username && !state.metadata.operatorName) {
         state.metadata.operatorName = data.username;
         document.getElementById('meta-operator-name').value = data.username;
         updateDatabasePreview();
@@ -105,6 +108,7 @@ function setupEventListeners() {
       if (targetSection === 'section-wizard' || targetSection === 'section-export') {
         document.getElementById('section-metadata').classList.remove('hidden');
       }
+      saveSessionCache();
     });
   });
 
@@ -113,6 +117,11 @@ function setupEventListeners() {
   document.getElementById('btn-select-folder').addEventListener('click', handleSelectFolder);
   document.getElementById('btn-generate-demo').addEventListener('click', handleGenerateDemo);
   document.getElementById('btn-export-sqlite').addEventListener('click', handleExportSqlite);
+  
+  const btnPrint = document.getElementById('btn-print-pull-sheet');
+  if (btnPrint) {
+    btnPrint.addEventListener('click', handlePrintPullSheet);
+  }
   
   // Plus sign path button
   document.getElementById('btn-add-path-field').addEventListener('click', () => {
@@ -133,7 +142,9 @@ function setupEventListeners() {
     // Bind delete click
     row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
       row.remove();
+      saveSessionCache();
     });
+    saveSessionCache();
   });
   
   // Settings inputs
@@ -146,6 +157,7 @@ function setupEventListeners() {
         buildWizard();
         updateDatabasePreview();
       }
+      saveSessionCache();
     }
   });
   document.getElementById('settings-offcut').addEventListener('input', e => {
@@ -157,6 +169,7 @@ function setupEventListeners() {
         buildWizard();
         updateDatabasePreview();
       }
+      saveSessionCache();
     }
   });
   
@@ -164,18 +177,22 @@ function setupEventListeners() {
   document.getElementById('meta-job-number').addEventListener('input', e => {
     state.metadata.jobNumber = e.target.value;
     updateDatabasePreview();
+    saveSessionCache();
   });
   document.getElementById('meta-client').addEventListener('input', e => {
     state.metadata.client = e.target.value;
     updateDatabasePreview();
+    saveSessionCache();
   });
   document.getElementById('meta-project-name').addEventListener('input', e => {
     state.metadata.projectName = e.target.value;
     updateDatabasePreview();
+    saveSessionCache();
   });
   document.getElementById('meta-operator-name').addEventListener('input', e => {
     state.metadata.operatorName = e.target.value;
     updateDatabasePreview();
+    saveSessionCache();
   });
   
   // Database Preview Tabs
@@ -535,7 +552,8 @@ function processScannedFiles() {
         backer_material: m.backer_material,
         machine_type: m.machine_type,
         thickness: m.thickness,
-        grain_direction: m.grain_direction
+        grain_direction: m.grain_direction,
+        use_whole_sheets: m.use_whole_sheets
       };
     });
   }
@@ -577,6 +595,7 @@ function processScannedFiles() {
         backer_material: prev ? prev.backer_material : '',
         thickness: prev ? prev.thickness : parseThicknessFromName(materialName),
         grain_direction: prev ? prev.grain_direction : 'Horizontal',
+        use_whole_sheets: prev ? (prev.use_whole_sheets || 0) : 0,
         pullSheetData: null,
         toolpathData: null
       };
@@ -782,10 +801,14 @@ function buildWizard() {
               <option value="No Grain" ${mat.grain_direction === 'No Grain' ? 'selected' : ''}>No Grain</option>
             </select>
           </div>
-          <div class="form-group checkbox-group" style="padding-bottom: 8px;">
+          <div class="form-group checkbox-group" style="padding-bottom: 8px; flex-direction: column; gap: 8px; align-items: flex-start;">
             <label class="checkbox-label">
               <input type="checkbox" class="input-raw-material" ${isRaw ? 'checked' : ''}>
               <span>Raw Material (No Lay-Up)</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" class="input-use-whole-sheets" ${mat.use_whole_sheets ? 'checked' : ''}>
+              <span>Use Whole Sheets</span>
             </label>
           </div>
         </div>
@@ -802,22 +825,14 @@ function buildWizard() {
         </div>
         
         <div class="layup-dimensions-badge" style="flex-direction: column; align-items: stretch; gap: 8px;">
-          <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed var(--border-color); padding-bottom: 8px; margin-bottom: 4px;">
-            <span>Sheet Quantity:</span>
-            <strong>${mat.sheets.length} sheet${mat.sheets.length > 1 ? 's' : ''}</strong>
-          </div>
-          ${mat.sheets.map((sheet, idx) => `
-            <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
-              <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
-              <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Net: <strong>${sheet.net_length.toFixed(1)}" x ${sheet.net_width.toFixed(1)}"</strong></span>
-            </div>
-          `).join('')}
+          ${renderCardDimensionsBadge(mat)}
         </div>
       </div>
     `;
     
     // Select elements
     const rawCheckbox = card.querySelector('.input-raw-material');
+    const wholeSheetsCheckbox = card.querySelector('.input-use-whole-sheets');
     const faceInput = card.querySelector('.input-face');
     const backerInput = card.querySelector('.input-backer');
     const coreSelect = card.querySelector('.input-core');
@@ -837,37 +852,78 @@ function buildWizard() {
         backerInput.disabled = false;
       }
       updateDatabasePreview();
+      saveSessionCache();
+    });
+
+    wholeSheetsCheckbox.addEventListener('change', (e) => {
+      mat.use_whole_sheets = e.target.checked ? 1 : 0;
+      const badge = card.querySelector('.layup-dimensions-badge');
+      if (badge) badge.innerHTML = renderCardDimensionsBadge(mat);
+      updateDatabasePreview();
+      saveSessionCache();
     });
     
     // Input syncs
     faceInput.addEventListener('input', e => {
       mat.face_material = e.target.value;
       updateDatabasePreview();
+      saveSessionCache();
     });
     
     backerInput.addEventListener('input', e => {
       mat.backer_material = e.target.value;
       updateDatabasePreview();
+      saveSessionCache();
     });
     
     coreSelect.addEventListener('change', e => {
       mat.core_substrate = e.target.value;
       updateDatabasePreview();
+      saveSessionCache();
     });
 
     thicknessInput.addEventListener('input', e => {
       const val = parseFloat(e.target.value);
       mat.thickness = isNaN(val) ? 0 : val;
       updateDatabasePreview();
+      saveSessionCache();
     });
     
     grainSelect.addEventListener('change', e => {
       mat.grain_direction = e.target.value;
       updateDatabasePreview();
+      saveSessionCache();
     });
     
     stepsContainer.appendChild(card);
   });
+}
+
+// Helper to render wizard card dimensions badge
+function renderCardDimensionsBadge(mat) {
+  const isWhole = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
+  return `
+    <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed var(--border-color); padding-bottom: 8px; margin-bottom: 4px;">
+      <span>Sheet Quantity:</span>
+      <strong>${mat.sheets.length} sheet${mat.sheets.length > 1 ? 's' : ''}</strong>
+    </div>
+    ${mat.sheets.map((sheet, idx) => {
+      if (isWhole) {
+        return `
+          <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
+            <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
+            <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Final: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}" (Whole Sheet)</strong></span>
+          </div>
+        `;
+      }
+      return `
+        <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
+          <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
+          <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Net: <strong>${sheet.net_length.toFixed(1)}" x ${sheet.net_width.toFixed(1)}"</strong></span>
+        </div>
+      `;
+    }).join('')}
+  `;
 }
 
 // Helper to get consolidated material summary rows (consolidates identical sheet parameters and calculates quantity)
@@ -878,6 +934,7 @@ function getConsolidatedMaterialRows() {
   Object.keys(state.materials).forEach(key => {
     const mat = state.materials[key];
     const isLayUp = mat.layup_required === 1;
+    const isWholeSheets = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
     const groupMap = {};
     
     const sheetsList = (mat.sheets && mat.sheets.length > 0) ? mat.sheets : [{
@@ -891,17 +948,19 @@ function getConsolidatedMaterialRows() {
     }];
     
     sheetsList.forEach(s => {
-      const fLen = s.final_length || mat.final_length || 0;
-      const fWid = s.final_width || mat.final_width || 0;
       const rx = s.raw_max_x || mat.raw_max_x || 96.0;
       const ry = s.raw_max_y || mat.raw_max_y || 48.0;
+
+      let fLen = isWholeSheets ? rx : (s.final_length || mat.final_length || 0);
+      let fWid = isWholeSheets ? ry : (s.final_width || mat.final_width || 0);
+
       const thick = mat.thickness !== undefined ? mat.thickness : 0.75;
       const grain = mat.grain_direction || 'Horizontal';
       const faceMat = isLayUp ? (mat.face_material || '') : '';
       const backerMat = isLayUp ? (mat.backer_material || '') : '';
       const coreMat = mat.core_substrate || '';
       
-      const sig = `${mat.name}|${mat.machine_type}|${mat.layup_required}|${faceMat}|${coreMat}|${backerMat}|${thick}|${grain}|${fLen}|${fWid}|${rx}|${ry}`;
+      const sig = `${mat.name}|${mat.machine_type}|${mat.layup_required}|${faceMat}|${coreMat}|${backerMat}|${thick}|${grain}|${fLen}|${fWid}|${rx}|${ry}|${isWholeSheets ? 1 : 0}`;
       
       if (!groupMap[sig]) {
         groupMap[sig] = {
@@ -917,7 +976,8 @@ function getConsolidatedMaterialRows() {
           final_length: fLen,
           final_width: fWid,
           raw_max_x: rx,
-          raw_max_y: ry
+          raw_max_y: ry,
+          use_whole_sheets: isWholeSheets ? 1 : 0
         };
       }
       groupMap[sig].quantity += 1;
@@ -1522,4 +1582,298 @@ function showToast(title, message, type = 'success') {
     toast.style.animation = 'toastIn 0.3s reverse';
     setTimeout(() => toast.remove(), 300);
   }, 4000);
+}
+
+// Render Printable Pull Sheet Report matching pull sheet example.pdf
+function renderPullSheetReport() {
+  const container = document.getElementById('pull-sheet-report-container');
+  if (!container) return;
+
+  const operatorName = state.metadata.operatorName || 'Sam H';
+  const dateProcessed = state.metadata.dateProcessed || new Date().toLocaleDateString('en-US');
+  const clientName = state.metadata.client ? state.metadata.client.trim() : '';
+  const projectName = state.metadata.projectName || 'Untitled Project';
+  const jobNumber = state.metadata.jobNumber || 'N/A';
+
+  const projectSubheader = clientName ? `${clientName} - ${projectName}` : projectName;
+
+  // Group materials by machine_type
+  const machineGroups = {};
+  if (state.materials) {
+    Object.keys(state.materials).forEach(key => {
+      const mat = state.materials[key];
+      const mType = mat.machine_type || 'Homag';
+      if (!machineGroups[mType]) {
+        machineGroups[mType] = { direct: [], layup: [] };
+      }
+      if (mat.layup_required === 0) {
+        machineGroups[mType].direct.push(mat);
+      } else {
+        machineGroups[mType].layup.push(mat);
+      }
+    });
+  }
+
+  // Helper to clean leading thickness fraction prefixes from material titles (e.g. "3-4 Raw Ply" -> "Raw Ply")
+  function cleanMaterialTitle(name) {
+    if (!name) return '';
+    return name.replace(/^(\d+[\s-]+\d+[\s/-]+\d+|\d+[\s/-]+\d+)\s*/i, '').trim();
+  }
+
+  // Format thickness string helper (e.g. 0.75 -> 3/4", 1.125 -> 1-1/8", 0.5 -> 1/2")
+  function formatThicknessStr(val) {
+    if (Math.abs(val - 1.125) < 0.02) return '1-1/8"';
+    if (Math.abs(val - 0.75) < 0.02) return '3/4"';
+    if (Math.abs(val - 0.5) < 0.02) return '1/2"';
+    if (Math.abs(val - 0.625) < 0.02) return '5/8"';
+    if (Math.abs(val - 0.9375) < 0.02) return '15/16"';
+    return `${val}"`;
+  }
+
+  // Format dimension bounds string (exact footage: (5x10), (4x8); non-exact footage: explicit inches (44"x120"))
+  function formatBoundsStr(fLen, fWid) {
+    const len = Math.max(fLen || 0, fWid || 0);
+    const wid = Math.min(fLen || 0, fWid || 0);
+    
+    // Check if the calculated offcut size (fLen, fWid) in material_summary is an exact full stock sheet (5x10 or 4x8)
+    const isFull5x10 = (Math.abs(len - 121) <= 1.5 || Math.abs(len - 120) <= 1.5) && 
+                       (Math.abs(wid - 61) <= 1.5 || Math.abs(wid - 60) <= 1.5);
+    const isFull4x8 = (Math.abs(len - 96) <= 1.5) && (Math.abs(wid - 48) <= 1.5);
+
+    if (isFull5x10) return '(5x10)';
+    if (isFull4x8) return '(4x8)';
+    
+    // Non-full stock offcut sizes: always use explicit inches so layup operator knows exact dimensions (e.g. 44"x120", 25"x120")
+    const renderWid = wid > 0 ? Math.round(wid) : 48;
+    const renderLen = len > 0 ? Math.round(len) : 96;
+    return `(${renderWid}"x${renderLen}")`;
+  }
+
+  let html = `
+    <div class="ps-report-header">
+      <div class="ps-header-top">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <img src="logo.png" alt="Corporate Interiors Logo" style="height: 32px; width: auto; object-fit: contain;">
+          <span>Drawn by: ${operatorName}</span>
+        </div>
+        <h2 class="ps-header-title">Pull Sheet</h2>
+        <span>${dateProcessed}</span>
+      </div>
+      <div class="ps-header-sub">
+        <span>${projectSubheader}</span>
+        <span>Job #: ${jobNumber}</span>
+      </div>
+    </div>
+  `;
+
+  // Render Machine Groups
+  const machineKeys = Object.keys(machineGroups);
+  if (machineKeys.length === 0) {
+    html += `<p style="padding: 20px; text-align: center;">No materials configured in wizard.</p>`;
+  } else {
+    machineKeys.forEach(mType => {
+      const group = machineGroups[mType];
+
+      // Category A: Direct-to-Machine Items
+      if (group.direct.length > 0) {
+        html += `
+          <div class="ps-section">
+            <h3 class="ps-section-title">${mType}</h3>
+        `;
+        group.direct.forEach(mat => {
+          const consolidatedRows = getConsolidatedMaterialRows().filter(r => r.material_name === mat.name && r.machine_type === mat.machine_type);
+          const rowsToRender = consolidatedRows.length > 0 ? consolidatedRows : [{
+            quantity: mat.sheets ? mat.sheets.length : 1,
+            thickness: mat.thickness || 0.75,
+            final_length: mat.final_length,
+            final_width: mat.final_width,
+            raw_max_x: mat.raw_max_x,
+            raw_max_y: mat.raw_max_y
+          }];
+
+          const cleanTitle = cleanMaterialTitle(mat.name);
+
+          rowsToRender.forEach(r => {
+            const thickStr = formatThicknessStr(r.thickness || 0.75);
+            const boundsStr = formatBoundsStr(r.final_length, r.final_width, r.raw_max_x, r.raw_max_y);
+            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(4x8)');
+            const offcutNote = isCustomSize ? ' - If offcut is available' : '';
+
+            html += `
+              <div class="ps-direct-item">(${r.quantity}) ${thickStr} ${cleanTitle} ${boundsStr}${offcutNote}</div>
+            `;
+          });
+        });
+        html += `</div>`;
+      }
+
+      // Category B: Spray Booth Lay-Up Stacks
+      if (group.layup.length > 0) {
+        html += `
+          <div class="ps-section">
+            <h3 class="ps-section-title">Spray Booth --> then ${mType}</h3>
+        `;
+        group.layup.forEach(mat => {
+          const consolidatedRows = getConsolidatedMaterialRows().filter(r => r.material_name === mat.name && r.machine_type === mat.machine_type);
+          const rowsToRender = consolidatedRows.length > 0 ? consolidatedRows : [{
+            quantity: mat.sheets ? mat.sheets.length : 1,
+            faceUp_matl: mat.backer_material || 'BKR',
+            core_substrate: mat.core_substrate || 'PB',
+            faceDown_matl: mat.face_material || 'VENEER',
+            thickness: mat.thickness || 0.75,
+            grain_direction: mat.grain_direction || 'Horizontal',
+            final_length: mat.final_length,
+            final_width: mat.final_width,
+            raw_max_x: mat.raw_max_x,
+            raw_max_y: mat.raw_max_y
+          }];
+
+          rowsToRender.forEach(r => {
+            const thickStr = formatThicknessStr(r.thickness || 0.75);
+            const boundsStr = formatBoundsStr(r.final_length, r.final_width, r.raw_max_x, r.raw_max_y);
+            const faceUp = r.faceUp_matl || 'BKR';
+            const core = r.core_substrate || 'PB';
+            const faceDown = r.faceDown_matl || 'VENEER';
+            
+            const grainDisplay = r.grain_direction === 'No Grain' ? 'No Grain' : `${r.grain_direction || 'Horizontal'} Grain`;
+
+            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(4x8)');
+            const offcutNoteHtml = isCustomSize ? `<div style="font-size: 11px; font-weight: normal; margin-top: 2px; color: #d32f2f; font-style: italic;">If offcut is available</div>` : '';
+
+            html += `
+              <div class="ps-layup-card">
+                <div class="ps-layup-qty">(${r.quantity})</div>
+                <div class="ps-layup-stack">
+                  <div class="ps-stack-tier">${faceUp}</div>
+                  <div class="ps-stack-divider"></div>
+                  <div class="ps-stack-tier">${core}</div>
+                  <div class="ps-stack-divider"></div>
+                  <div class="ps-stack-tier">${faceDown}</div>
+                </div>
+                <div class="ps-layup-dims">
+                  <div>${thickStr} ${boundsStr}</div>
+                  ${offcutNoteHtml}
+                  <div style="font-size: 12px; font-weight: normal; margin-top: 4px; color: #444;">${grainDisplay}</div>
+                </div>
+              </div>
+            `;
+          });
+        });
+        html += `</div>`;
+      }
+    });
+  }
+
+  container.innerHTML = html;
+}
+
+function handlePrintPullSheet() {
+  renderPullSheetReport();
+  window.print();
+}
+
+// Cache session state so user input is preserved across navigation tabs and setting changes
+function saveSessionCache() {
+  try {
+    const cacheData = {
+      pastedPath: state.pastedPath,
+      pastedPathsList: Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value),
+      metadata: state.metadata,
+      settings: state.settings,
+      materials: state.materials,
+      files: state.files
+    };
+    sessionStorage.setItem('ps_wizard_session_cache', JSON.stringify(cacheData));
+  } catch (e) {
+    console.warn('Could not save session cache:', e);
+  }
+}
+
+function restoreSessionCache() {
+  try {
+    const raw = sessionStorage.getItem('ps_wizard_session_cache');
+    if (!raw) return false;
+    const cacheData = JSON.parse(raw);
+    if (!cacheData) return false;
+
+    if (cacheData.metadata) {
+      state.metadata = Object.assign(state.metadata, cacheData.metadata);
+      if (document.getElementById('meta-job-number')) document.getElementById('meta-job-number').value = state.metadata.jobNumber || '';
+      if (document.getElementById('meta-client')) document.getElementById('meta-client').value = state.metadata.client || '';
+      if (document.getElementById('meta-project-name')) document.getElementById('meta-project-name').value = state.metadata.projectName || '';
+      if (document.getElementById('meta-operator-name')) document.getElementById('meta-operator-name').value = state.metadata.operatorName || '';
+      if (document.getElementById('meta-date-processed')) document.getElementById('meta-date-processed').value = state.metadata.dateProcessed || '';
+    }
+
+    if (cacheData.settings) {
+      state.settings = Object.assign(state.settings, cacheData.settings);
+      if (document.getElementById('settings-overcut')) document.getElementById('settings-overcut').value = state.settings.overcutOverage;
+      if (document.getElementById('settings-offcut')) document.getElementById('settings-offcut').value = state.settings.minOffcutDim;
+    }
+
+    if (cacheData.pastedPathsList && Array.isArray(cacheData.pastedPathsList) && cacheData.pastedPathsList.length > 0) {
+      const container = document.getElementById('paths-list-container');
+      if (container) {
+        container.innerHTML = '';
+        cacheData.pastedPathsList.forEach((pathVal, idx) => {
+          const row = document.createElement('div');
+          row.className = 'path-input-row';
+          row.style.display = 'flex';
+          row.style.gap = '8px';
+          row.style.alignItems = 'center';
+          row.innerHTML = `
+            <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="${pathVal}">
+            ${idx === 0 ? `
+              <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            ` : `
+              <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            `}
+          `;
+          container.appendChild(row);
+          if (idx === 0) {
+            row.querySelector('#btn-add-path-field').addEventListener('click', () => {
+              const newRow = document.createElement('div');
+              newRow.className = 'path-input-row';
+              newRow.style.display = 'flex';
+              newRow.style.gap = '8px';
+              newRow.style.alignItems = 'center';
+              newRow.innerHTML = `
+                <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
+                <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+              `;
+              container.appendChild(newRow);
+              newRow.querySelector('.btn-remove-path-field').addEventListener('click', () => { newRow.remove(); saveSessionCache(); });
+              saveSessionCache();
+            });
+          } else {
+            row.querySelector('.btn-remove-path-field').addEventListener('click', () => { row.remove(); saveSessionCache(); });
+          }
+        });
+      }
+    }
+
+    if (cacheData.files && Array.isArray(cacheData.files) && cacheData.files.length > 0) {
+      state.files = cacheData.files;
+    }
+
+    if (cacheData.materials && Object.keys(cacheData.materials).length > 0) {
+      state.materials = cacheData.materials;
+      displayScanResults();
+      buildWizard();
+      updateDatabasePreview();
+
+      if (document.getElementById('section-metadata')) document.getElementById('section-metadata').classList.remove('hidden');
+      if (document.getElementById('section-wizard')) document.getElementById('section-wizard').classList.remove('hidden');
+    }
+    return true;
+  } catch (e) {
+    console.warn('Could not restore session cache:', e);
+    return false;
+  }
 }

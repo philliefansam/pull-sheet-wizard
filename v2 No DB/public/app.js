@@ -34,6 +34,9 @@ async function initApp() {
   
   // Set up event listeners
   setupEventListeners();
+
+  // Restore session cache if present
+  restoreSessionCache();
   
   // Check backend server connection
   await checkServerConnection();
@@ -52,7 +55,7 @@ async function checkServerConnection() {
       statusEl.querySelector('.indicator-text').textContent = 'Server Connected';
       
       const data = await res.json();
-      if (data.username) {
+      if (data.username && !state.metadata.operatorName) {
         state.metadata.operatorName = data.username;
         document.getElementById('meta-operator-name').value = data.username;
         updateDatabasePreview();
@@ -105,6 +108,7 @@ function setupEventListeners() {
       if (targetSection === 'section-wizard' || targetSection === 'section-export') {
         document.getElementById('section-metadata').classList.remove('hidden');
       }
+      saveSessionCache();
     });
   });
 
@@ -138,7 +142,9 @@ function setupEventListeners() {
     // Bind delete click
     row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
       row.remove();
+      saveSessionCache();
     });
+    saveSessionCache();
   });
   
   // Settings inputs
@@ -151,6 +157,7 @@ function setupEventListeners() {
         buildWizard();
         updateDatabasePreview();
       }
+      saveSessionCache();
     }
   });
   document.getElementById('settings-offcut').addEventListener('input', e => {
@@ -162,6 +169,7 @@ function setupEventListeners() {
         buildWizard();
         updateDatabasePreview();
       }
+      saveSessionCache();
     }
   });
   
@@ -169,18 +177,22 @@ function setupEventListeners() {
   document.getElementById('meta-job-number').addEventListener('input', e => {
     state.metadata.jobNumber = e.target.value;
     updateDatabasePreview();
+    saveSessionCache();
   });
   document.getElementById('meta-client').addEventListener('input', e => {
     state.metadata.client = e.target.value;
     updateDatabasePreview();
+    saveSessionCache();
   });
   document.getElementById('meta-project-name').addEventListener('input', e => {
     state.metadata.projectName = e.target.value;
     updateDatabasePreview();
+    saveSessionCache();
   });
   document.getElementById('meta-operator-name').addEventListener('input', e => {
     state.metadata.operatorName = e.target.value;
     updateDatabasePreview();
+    saveSessionCache();
   });
   
   // Database Preview Tabs
@@ -540,7 +552,8 @@ function processScannedFiles() {
         backer_material: m.backer_material,
         machine_type: m.machine_type,
         thickness: m.thickness,
-        grain_direction: m.grain_direction
+        grain_direction: m.grain_direction,
+        use_whole_sheets: m.use_whole_sheets
       };
     });
   }
@@ -582,6 +595,7 @@ function processScannedFiles() {
         backer_material: prev ? prev.backer_material : '',
         thickness: prev ? prev.thickness : parseThicknessFromName(materialName),
         grain_direction: prev ? prev.grain_direction : 'Horizontal',
+        use_whole_sheets: prev ? (prev.use_whole_sheets || 0) : 0,
         pullSheetData: null,
         toolpathData: null
       };
@@ -787,10 +801,14 @@ function buildWizard() {
               <option value="No Grain" ${mat.grain_direction === 'No Grain' ? 'selected' : ''}>No Grain</option>
             </select>
           </div>
-          <div class="form-group checkbox-group" style="padding-bottom: 8px;">
+          <div class="form-group checkbox-group" style="padding-bottom: 8px; flex-direction: column; gap: 8px; align-items: flex-start;">
             <label class="checkbox-label">
               <input type="checkbox" class="input-raw-material" ${isRaw ? 'checked' : ''}>
               <span>Raw Material (No Lay-Up)</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" class="input-use-whole-sheets" ${mat.use_whole_sheets ? 'checked' : ''}>
+              <span>Use Whole Sheets</span>
             </label>
           </div>
         </div>
@@ -807,22 +825,14 @@ function buildWizard() {
         </div>
         
         <div class="layup-dimensions-badge" style="flex-direction: column; align-items: stretch; gap: 8px;">
-          <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed var(--border-color); padding-bottom: 8px; margin-bottom: 4px;">
-            <span>Sheet Quantity:</span>
-            <strong>${mat.sheets.length} sheet${mat.sheets.length > 1 ? 's' : ''}</strong>
-          </div>
-          ${mat.sheets.map((sheet, idx) => `
-            <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
-              <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
-              <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Net: <strong>${sheet.net_length.toFixed(1)}" x ${sheet.net_width.toFixed(1)}"</strong></span>
-            </div>
-          `).join('')}
+          ${renderCardDimensionsBadge(mat)}
         </div>
       </div>
     `;
     
     // Select elements
     const rawCheckbox = card.querySelector('.input-raw-material');
+    const wholeSheetsCheckbox = card.querySelector('.input-use-whole-sheets');
     const faceInput = card.querySelector('.input-face');
     const backerInput = card.querySelector('.input-backer');
     const coreSelect = card.querySelector('.input-core');
@@ -842,37 +852,78 @@ function buildWizard() {
         backerInput.disabled = false;
       }
       updateDatabasePreview();
+      saveSessionCache();
+    });
+
+    wholeSheetsCheckbox.addEventListener('change', (e) => {
+      mat.use_whole_sheets = e.target.checked ? 1 : 0;
+      const badge = card.querySelector('.layup-dimensions-badge');
+      if (badge) badge.innerHTML = renderCardDimensionsBadge(mat);
+      updateDatabasePreview();
+      saveSessionCache();
     });
     
     // Input syncs
     faceInput.addEventListener('input', e => {
       mat.face_material = e.target.value;
       updateDatabasePreview();
+      saveSessionCache();
     });
     
     backerInput.addEventListener('input', e => {
       mat.backer_material = e.target.value;
       updateDatabasePreview();
+      saveSessionCache();
     });
     
     coreSelect.addEventListener('change', e => {
       mat.core_substrate = e.target.value;
       updateDatabasePreview();
+      saveSessionCache();
     });
 
     thicknessInput.addEventListener('input', e => {
       const val = parseFloat(e.target.value);
       mat.thickness = isNaN(val) ? 0 : val;
       updateDatabasePreview();
+      saveSessionCache();
     });
     
     grainSelect.addEventListener('change', e => {
       mat.grain_direction = e.target.value;
       updateDatabasePreview();
+      saveSessionCache();
     });
     
     stepsContainer.appendChild(card);
   });
+}
+
+// Helper to render wizard card dimensions badge
+function renderCardDimensionsBadge(mat) {
+  const isWhole = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
+  return `
+    <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed var(--border-color); padding-bottom: 8px; margin-bottom: 4px;">
+      <span>Sheet Quantity:</span>
+      <strong>${mat.sheets.length} sheet${mat.sheets.length > 1 ? 's' : ''}</strong>
+    </div>
+    ${mat.sheets.map((sheet, idx) => {
+      if (isWhole) {
+        return `
+          <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
+            <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
+            <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Final: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}" (Whole Sheet)</strong></span>
+          </div>
+        `;
+      }
+      return `
+        <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
+          <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
+          <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Net: <strong>${sheet.net_length.toFixed(1)}" x ${sheet.net_width.toFixed(1)}"</strong></span>
+        </div>
+      `;
+    }).join('')}
+  `;
 }
 
 // Helper to get consolidated material summary rows (consolidates identical sheet parameters and calculates quantity)
@@ -883,6 +934,7 @@ function getConsolidatedMaterialRows() {
   Object.keys(state.materials).forEach(key => {
     const mat = state.materials[key];
     const isLayUp = mat.layup_required === 1;
+    const isWholeSheets = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
     const groupMap = {};
     
     const sheetsList = (mat.sheets && mat.sheets.length > 0) ? mat.sheets : [{
@@ -896,17 +948,19 @@ function getConsolidatedMaterialRows() {
     }];
     
     sheetsList.forEach(s => {
-      const fLen = s.final_length || mat.final_length || 0;
-      const fWid = s.final_width || mat.final_width || 0;
       const rx = s.raw_max_x || mat.raw_max_x || 96.0;
       const ry = s.raw_max_y || mat.raw_max_y || 48.0;
+
+      let fLen = isWholeSheets ? rx : (s.final_length || mat.final_length || 0);
+      let fWid = isWholeSheets ? ry : (s.final_width || mat.final_width || 0);
+
       const thick = mat.thickness !== undefined ? mat.thickness : 0.75;
       const grain = mat.grain_direction || 'Horizontal';
       const faceMat = isLayUp ? (mat.face_material || '') : '';
       const backerMat = isLayUp ? (mat.backer_material || '') : '';
       const coreMat = mat.core_substrate || '';
       
-      const sig = `${mat.name}|${mat.machine_type}|${mat.layup_required}|${faceMat}|${coreMat}|${backerMat}|${thick}|${grain}|${fLen}|${fWid}|${rx}|${ry}`;
+      const sig = `${mat.name}|${mat.machine_type}|${mat.layup_required}|${faceMat}|${coreMat}|${backerMat}|${thick}|${grain}|${fLen}|${fWid}|${rx}|${ry}|${isWholeSheets ? 1 : 0}`;
       
       if (!groupMap[sig]) {
         groupMap[sig] = {
@@ -922,7 +976,8 @@ function getConsolidatedMaterialRows() {
           final_length: fLen,
           final_width: fWid,
           raw_max_x: rx,
-          raw_max_y: ry
+          raw_max_y: ry,
+          use_whole_sheets: isWholeSheets ? 1 : 0
         };
       }
       groupMap[sig].quantity += 1;
@@ -1641,8 +1696,11 @@ function renderPullSheetReport() {
           rowsToRender.forEach(r => {
             const thickStr = formatThicknessStr(r.thickness || 0.75);
             const boundsStr = formatBoundsStr(r.final_length, r.final_width, r.raw_max_x, r.raw_max_y);
+            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(4x8)');
+            const offcutNote = isCustomSize ? ' - If offcut is available' : '';
+
             html += `
-              <div class="ps-direct-item">(${r.quantity}) ${thickStr} ${cleanTitle} ${boundsStr}</div>
+              <div class="ps-direct-item">(${r.quantity}) ${thickStr} ${cleanTitle} ${boundsStr}${offcutNote}</div>
             `;
           });
         });
@@ -1679,6 +1737,9 @@ function renderPullSheetReport() {
             
             const grainDisplay = r.grain_direction === 'No Grain' ? 'No Grain' : `${r.grain_direction || 'Horizontal'} Grain`;
 
+            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(4x8)');
+            const offcutNoteHtml = isCustomSize ? `<div style="font-size: 11px; font-weight: normal; margin-top: 2px; color: #d32f2f; font-style: italic;">If offcut is available</div>` : '';
+
             html += `
               <div class="ps-layup-card">
                 <div class="ps-layup-qty">(${r.quantity})</div>
@@ -1691,6 +1752,7 @@ function renderPullSheetReport() {
                 </div>
                 <div class="ps-layup-dims">
                   <div>${thickStr} ${boundsStr}</div>
+                  ${offcutNoteHtml}
                   <div style="font-size: 12px; font-weight: normal; margin-top: 4px; color: #444;">${grainDisplay}</div>
                 </div>
               </div>
@@ -1708,4 +1770,110 @@ function renderPullSheetReport() {
 function handlePrintPullSheet() {
   renderPullSheetReport();
   window.print();
+}
+
+// Cache session state so user input is preserved across navigation tabs and setting changes
+function saveSessionCache() {
+  try {
+    const cacheData = {
+      pastedPath: state.pastedPath,
+      pastedPathsList: Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value),
+      metadata: state.metadata,
+      settings: state.settings,
+      materials: state.materials,
+      files: state.files
+    };
+    sessionStorage.setItem('ps_wizard_session_cache', JSON.stringify(cacheData));
+  } catch (e) {
+    console.warn('Could not save session cache:', e);
+  }
+}
+
+function restoreSessionCache() {
+  try {
+    const raw = sessionStorage.getItem('ps_wizard_session_cache');
+    if (!raw) return false;
+    const cacheData = JSON.parse(raw);
+    if (!cacheData) return false;
+
+    if (cacheData.metadata) {
+      state.metadata = Object.assign(state.metadata, cacheData.metadata);
+      if (document.getElementById('meta-job-number')) document.getElementById('meta-job-number').value = state.metadata.jobNumber || '';
+      if (document.getElementById('meta-client')) document.getElementById('meta-client').value = state.metadata.client || '';
+      if (document.getElementById('meta-project-name')) document.getElementById('meta-project-name').value = state.metadata.projectName || '';
+      if (document.getElementById('meta-operator-name')) document.getElementById('meta-operator-name').value = state.metadata.operatorName || '';
+      if (document.getElementById('meta-date-processed')) document.getElementById('meta-date-processed').value = state.metadata.dateProcessed || '';
+    }
+
+    if (cacheData.settings) {
+      state.settings = Object.assign(state.settings, cacheData.settings);
+      if (document.getElementById('settings-overcut')) document.getElementById('settings-overcut').value = state.settings.overcutOverage;
+      if (document.getElementById('settings-offcut')) document.getElementById('settings-offcut').value = state.settings.minOffcutDim;
+    }
+
+    if (cacheData.pastedPathsList && Array.isArray(cacheData.pastedPathsList) && cacheData.pastedPathsList.length > 0) {
+      const container = document.getElementById('paths-list-container');
+      if (container) {
+        container.innerHTML = '';
+        cacheData.pastedPathsList.forEach((pathVal, idx) => {
+          const row = document.createElement('div');
+          row.className = 'path-input-row';
+          row.style.display = 'flex';
+          row.style.gap = '8px';
+          row.style.alignItems = 'center';
+          row.innerHTML = `
+            <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="${pathVal}">
+            ${idx === 0 ? `
+              <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            ` : `
+              <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            `}
+          `;
+          container.appendChild(row);
+          if (idx === 0) {
+            row.querySelector('#btn-add-path-field').addEventListener('click', () => {
+              const newRow = document.createElement('div');
+              newRow.className = 'path-input-row';
+              newRow.style.display = 'flex';
+              newRow.style.gap = '8px';
+              newRow.style.alignItems = 'center';
+              newRow.innerHTML = `
+                <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
+                <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+              `;
+              container.appendChild(newRow);
+              newRow.querySelector('.btn-remove-path-field').addEventListener('click', () => { newRow.remove(); saveSessionCache(); });
+              saveSessionCache();
+            });
+          } else {
+            row.querySelector('.btn-remove-path-field').addEventListener('click', () => { row.remove(); saveSessionCache(); });
+          }
+        });
+      }
+    }
+
+    if (cacheData.files && Array.isArray(cacheData.files) && cacheData.files.length > 0) {
+      state.files = cacheData.files;
+    }
+
+    if (cacheData.materials && Object.keys(cacheData.materials).length > 0) {
+      state.materials = cacheData.materials;
+      displayScanResults();
+      buildWizard();
+      updateDatabasePreview();
+
+      if (document.getElementById('section-metadata')) document.getElementById('section-metadata').classList.remove('hidden');
+      if (document.getElementById('section-wizard')) document.getElementById('section-wizard').classList.remove('hidden');
+    }
+    return true;
+  } catch (e) {
+    console.warn('Could not restore session cache:', e);
+    return false;
+  }
 }
