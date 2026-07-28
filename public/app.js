@@ -650,15 +650,18 @@ function processScannedFiles() {
       mat.final_width = Math.max(mat.final_width, parsed.recommended_width);
       mat.toolpathData = parsed;
       
-      mat.sheets.push({
-        fileName: file.name,
-        raw_max_x: parsed.raw_max_x,
-        raw_max_y: parsed.raw_max_y,
-        net_length: parsed.net_length,
-        net_width: parsed.net_width,
-        final_length: parsed.recommended_length,
-        final_width: parsed.recommended_width
-      });
+      const sheetQty = parsed.sheet_count || 1;
+      for (let s = 0; s < sheetQty; s++) {
+        mat.sheets.push({
+          fileName: sheetQty > 1 ? `${file.name} (Sheet ${s + 1}/${sheetQty})` : file.name,
+          raw_max_x: parsed.raw_max_x,
+          raw_max_y: parsed.raw_max_y,
+          net_length: parsed.net_length,
+          net_width: parsed.net_width,
+          final_length: parsed.recommended_length,
+          final_width: parsed.recommended_width
+        });
+      }
     } else if (ext === 'txt' || ext === 'pull') {
       const parsed = parsePullSheet(file.content);
       if (parsed && parsed.length > 0) {
@@ -1315,6 +1318,7 @@ function parseHOP(content) {
 function parseCPOUT(content) {
   let raw_max_x = 0;
   let raw_max_y = 0;
+  let sheet_count = 1;
   
   const ordLengths = [];
   const ordWidths = [];
@@ -1325,6 +1329,13 @@ function parseCPOUT(content) {
     const parts = line.split(',');
     
     if (parts[0] === 'INV1') {
+      // 3rd part (0-indexed index 2) is number of sheets in run (e.g. INV1, 999, 10, ...)
+      if (parts[2]) {
+        const qty = parseInt(parts[2].trim());
+        if (!isNaN(qty) && qty > 0) {
+          sheet_count = qty;
+        }
+      }
       // 4th is RAW_MAX_Y, 5th is RAW_MAX_X (0-indexed 4 and 5)
       if (parts[4]) raw_max_y = parseFloat(parts[4]);
       if (parts[5]) raw_max_x = parseFloat(parts[5]);
@@ -1350,7 +1361,8 @@ function parseCPOUT(content) {
     net_length,
     net_width,
     recommended_length: recLength,
-    recommended_width: recWidth
+    recommended_width: recWidth,
+    sheet_count
   };
 }
 
