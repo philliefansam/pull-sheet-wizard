@@ -209,6 +209,7 @@ while ($listener.IsListening) {
                 $fileList += @{
                     name = $file.Name
                     relativePath = $relative
+                    scannedPath = $targetPath
                     content = $content
                 }
             }

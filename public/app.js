@@ -290,11 +290,14 @@ async function handleScan() {
     const results = await Promise.all(scanPromises);
     
     // Combine all files from all scanned paths
-    results.forEach(data => {
+    results.forEach((data, index) => {
       if (data.files && Array.isArray(data.files)) {
+        const currentScannedPath = paths[index] || state.pastedPath;
         data.files.forEach(f => {
-          // Prevent duplicates by relative path
-          if (!state.files.some(existing => existing.relativePath === f.relativePath)) {
+          if (!f.scannedPath) f.scannedPath = currentScannedPath;
+          // Prevent duplicates by unique key combining scannedPath and relativePath
+          const uniqueKey = `${f.scannedPath}/${f.relativePath}`;
+          if (!state.files.some(existing => `${existing.scannedPath || ''}/${existing.relativePath}` === uniqueKey)) {
             state.files.push(f);
           }
         });
@@ -503,12 +506,14 @@ function parseThicknessFromName(name) {
 }
 
 // Helper to extract clean material subfolder name from relative path
-function extractMaterialName(relativePath) {
+function extractMaterialName(relativePath, scannedPath) {
+  if (!relativePath) return 'Unclassified';
   const parts = relativePath.split('/');
   // Filter out file name (last element) and intermediate subfolders like "Run59" or "Run62"
   const folderParts = parts.slice(0, -1).filter(p => !/^Run\d+$/i.test(p));
   if (folderParts.length === 0) {
-    const rootParts = (state.pastedPath || '').split(/[\\/]/).filter(Boolean);
+    const targetP = scannedPath || state.pastedPath || '';
+    const rootParts = targetP.split(/[\\/]/).filter(Boolean);
     const rootName = rootParts[rootParts.length - 1] || 'Unclassified';
     return rootName;
   }
@@ -518,10 +523,11 @@ function extractMaterialName(relativePath) {
 
 // Helper to detect target machine of a file
 function detectFileMachine(file) {
-  const nameLower = file.name.toLowerCase();
+  const nameLower = file.name ? file.name.toLowerCase() : '';
   const ext = nameLower.split('.').pop();
   const relPathLower = (file.relativePath || '').toLowerCase();
-  const fullPathLower = (relPathLower + ' ' + (state.pastedPath || '')).toLowerCase();
+  const scannedPathLower = (file.scannedPath || '').toLowerCase();
+  const fullPathLower = (relPathLower + ' ' + scannedPathLower).toLowerCase();
   
   if (nameLower.includes('cpout') || ext === 'cpl' || fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw')) {
     return 'Holzher Beam Saw';
@@ -566,7 +572,7 @@ function processScannedFiles() {
   // Pre-pass: Determine machine type per material folder by checking if ANY file in that material folder is a beam saw or holzher cnc file
   const folderMachineMap = {};
   state.files.forEach(file => {
-    const matName = extractMaterialName(file.relativePath);
+    const matName = extractMaterialName(file.relativePath, file.scannedPath);
     const mType = detectFileMachine(file);
     if (!folderMachineMap[matName] || mType === 'Holzher Beam Saw' || mType === 'Holzher CNC') {
       folderMachineMap[matName] = mType;
@@ -576,7 +582,7 @@ function processScannedFiles() {
   state.materials = {};
   
   state.files.forEach(file => {
-    const materialName = extractMaterialName(file.relativePath);
+    const materialName = extractMaterialName(file.relativePath, file.scannedPath);
     const machineType = folderMachineMap[materialName] || detectFileMachine(file);
     
     // Create unique key based on material and machine to avoid grouping router and beam saw jobs together
