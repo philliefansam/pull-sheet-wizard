@@ -506,7 +506,15 @@ function parseThicknessFromName(name) {
 }
 
 // Helper to extract clean material subfolder name from relative path
-function extractMaterialName(relativePath, scannedPath) {
+function extractMaterialName(relativePath, scannedPath, fileContent, fileName) {
+  if (fileContent && (fileName || '').toLowerCase().includes('cpout')) {
+    const matchInv2 = fileContent.match(/INV2\s*,\s*([^,\r\n]+)/i);
+    if (matchInv2 && matchInv2[1].trim()) {
+      const matStr = matchInv2[1].replace(/\(.*?\)/, '').trim();
+      if (matStr) return matStr;
+    }
+  }
+
   if (!relativePath) return 'Unclassified';
   const parts = relativePath.split('/');
   // Filter out file name (last element) and intermediate subfolders like "Run59" or "Run62"
@@ -525,25 +533,32 @@ function extractMaterialName(relativePath, scannedPath) {
 function detectFileMachine(file) {
   const nameLower = file.name ? file.name.toLowerCase() : '';
   const ext = nameLower.split('.').pop();
+  
+  // Explicit file extension rules MUST NOT be overridden by folder keywords
+  if (ext === 'mpr') return 'Homag';
+  if (ext === 'hop') return 'Holzher CNC';
+  if (ext === 'cpout' || ext === 'cpl' || nameLower.includes('cpout')) return 'Holzher Beam Saw';
+
   const relPathLower = (file.relativePath || '').toLowerCase();
   const scannedPathLower = (file.scannedPath || '').toLowerCase();
   const fullPathLower = (relPathLower + ' ' + scannedPathLower).toLowerCase();
   
-  if (nameLower.includes('cpout') || ext === 'cpl' || fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw')) {
+  if (fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw')) {
     return 'Holzher Beam Saw';
   }
-  if (ext === 'hop' || fullPathLower.includes('holzher cnc') || fullPathLower.includes('holzher_cnc')) {
+  if (fullPathLower.includes('holzher cnc') || fullPathLower.includes('holzher_cnc')) {
     return 'Holzher CNC';
   }
-  if (ext === 'mpr' || fullPathLower.includes('homag')) {
+  if (fullPathLower.includes('homag')) {
     return 'Homag';
   }
+  
   if (ext === 'txt' || ext === 'pull') {
     const upperContent = (file.content || '').toUpperCase();
-    if (upperContent.includes('THEN BEAM SAW') || upperContent.includes('BEAM SAW') || fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw')) {
+    if (upperContent.includes('THEN BEAM SAW') || upperContent.includes('BEAM SAW')) {
       return 'Holzher Beam Saw';
     }
-    if (upperContent.includes('THEN HOLZHER') || upperContent.includes('HOLZHER CNC') || upperContent.includes('HOLZHER') || fullPathLower.includes('holzher')) {
+    if (upperContent.includes('THEN HOLZHER') || upperContent.includes('HOLZHER CNC') || upperContent.includes('HOLZHER')) {
       return 'Holzher CNC';
     }
   }
@@ -569,21 +584,11 @@ function processScannedFiles() {
     });
   }
 
-  // Pre-pass: Determine machine type per material folder by checking if ANY file in that material folder is a beam saw or holzher cnc file
-  const folderMachineMap = {};
-  state.files.forEach(file => {
-    const matName = extractMaterialName(file.relativePath, file.scannedPath);
-    const mType = detectFileMachine(file);
-    if (!folderMachineMap[matName] || mType === 'Holzher Beam Saw' || mType === 'Holzher CNC') {
-      folderMachineMap[matName] = mType;
-    }
-  });
-
   state.materials = {};
   
   state.files.forEach(file => {
-    const materialName = extractMaterialName(file.relativePath, file.scannedPath);
-    const machineType = folderMachineMap[materialName] || detectFileMachine(file);
+    const materialName = extractMaterialName(file.relativePath, file.scannedPath, file.content, file.name);
+    const machineType = detectFileMachine(file);
     
     // Create unique key based on material and machine to avoid grouping router and beam saw jobs together
     const key = `${materialName} (${machineType})`;
