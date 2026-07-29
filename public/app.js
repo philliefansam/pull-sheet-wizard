@@ -104,9 +104,12 @@ function setupEventListeners() {
           sec.classList.add('hidden');
         }
       });
-      // Show metadata if wizard or database is shown
-      if (targetSection === 'section-wizard' || targetSection === 'section-export') {
+      // Show metadata if wizard, database, or pull sheet is shown
+      if (targetSection === 'section-wizard' || targetSection === 'section-export' || targetSection === 'section-pull-sheet') {
         document.getElementById('section-metadata').classList.remove('hidden');
+      }
+      if (targetSection === 'section-pull-sheet') {
+        renderPullSheetReport();
       }
       saveSessionCache();
     });
@@ -121,6 +124,25 @@ function setupEventListeners() {
   const btnPrint = document.getElementById('btn-print-pull-sheet');
   if (btnPrint) {
     btnPrint.addEventListener('click', handlePrintPullSheet);
+  }
+
+  const btnGeneratePullSheet = document.getElementById('btn-generate-pull-sheet');
+  if (btnGeneratePullSheet) {
+    btnGeneratePullSheet.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+      const navPullSheet = document.getElementById('nav-pull-sheet');
+      if (navPullSheet) navPullSheet.classList.add('active');
+      
+      document.querySelectorAll('main > .content-body > section').forEach(sec => {
+        if (sec.id === 'section-pull-sheet' || sec.id === 'section-scan' || sec.id === 'section-metadata') {
+          sec.classList.remove('hidden');
+        } else {
+          sec.classList.add('hidden');
+        }
+      });
+      renderPullSheetReport();
+      saveSessionCache();
+    });
   }
   
   // Plus sign path button

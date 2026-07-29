@@ -774,3 +774,139 @@ input:disabled, select:disabled {
   width: 100%;
   white-space: nowrap;
 }
+
+/* Printable Pull Sheet Report Styles */
+#pull-sheet-report-container {
+  background: #ffffff;
+  color: #111111;
+  padding: 30px;
+  border-radius: 8px;
+  font-family: Arial, Helvetica, sans-serif;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  margin-top: 16px;
+}
+
+.ps-report-header {
+  border-bottom: 2px solid #000;
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+}
+
+.ps-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.ps-header-title {
+  font-size: 22px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 0;
+  color: #000;
+}
+
+.ps-header-sub {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 13px;
+  color: #333;
+}
+
+.ps-section {
+  margin-bottom: 24px;
+}
+
+.ps-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  border-bottom: 1.5px solid #333;
+  padding-bottom: 4px;
+  margin-bottom: 12px;
+  color: #000;
+}
+
+.ps-direct-item {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 6px 0;
+  color: #000;
+}
+
+.ps-layup-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background-color: #fafafa;
+}
+
+.ps-layup-qty {
+  font-size: 16px;
+  font-weight: bold;
+  min-width: 40px;
+  color: #000;
+}
+
+.ps-layup-stack {
+  border: 1px solid #000;
+  border-radius: 4px;
+  min-width: 220px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.ps-stack-tier {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  color: #000;
+  background-color: #ffffff;
+}
+
+.ps-stack-divider {
+  height: 1px;
+  background-color: #000;
+}
+
+.ps-layup-dims {
+  font-size: 14px;
+  font-weight: bold;
+  color: #000;
+}
+
+/* @media print styles for shop floor paper/PDF printing */
+@media print {
+  body {
+    background-color: #fff !important;
+    color: #000 !important;
+  }
+  .sidebar, .top-header, .scan-section, .wizard-section, .export-section, .settings-section, .no-print, #toast-container {
+    display: none !important;
+  }
+  .main-content {
+    margin-left: 0 !important;
+    padding: 0 !important;
+  }
+  .card {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+  }
+  #section-pull-sheet {
+    display: block !important;
+  }
+  #pull-sheet-report-container {
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+}
