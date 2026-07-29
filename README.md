@@ -1,4 +1,4 @@
-# Pull Sheet Wizard
+# Corporate Interiors - Pull Sheet Wizard
 
 A web application served by a local PowerShell HTTP listener backend that recursively scans project directories, parses CNC and Beam Saw machine files (`.mpr`, `.hop`, `.cpout`), aggregates toolpath bounding dimensions, and interactively generates printable shop-floor **Pull Sheets** and **Lay-Up Specifications**.
 
@@ -17,16 +17,20 @@ A web application served by a local PowerShell HTTP listener backend that recurs
   * Segregates router jobs (`Homag`, `Holzher CNC`) and saw jobs (`Holzher Beam Saw`).
   * Automatically parses nominal material thickness from folder names (e.g. `1 1-8` $\rightarrow$ `1.125"`, `3-4` $\rightarrow$ `0.75"`).
 
+* **Re-Introduction File Handling**:
+  * Automatically detects and excludes G-code/toolpath files starting with a lowercase `"r"` (e.g. `r7Nb0024.mpr`), identifying them as re-introduction files that require no additional material stock.
+
 * **Interactive Lay-Up Wizard**:
   * Customizable **Core Substrates** (`Particle Board (PB)`, `MDF`, `Plywood`).
   * Dynamic **Thickness (in)** overrides and **Grain Direction** selection (`Horizontal`, `Vertical`, `No Grain`).
   * Toggle for **Raw Materials (No Lay-Up)** vs. **Spray Booth Lay-Up** (Face Up / Face Down laminate assignment).
+  * Toggle for **Use Whole Sheets** vs offcut sizes.
   * Auto-consolidates matching sheet sizes with quantity counters.
 
 * **Browser-Native Printable Pull Sheet Reports**:
-  * Produces formatted shop-floor pull sheets matching physical shop standards.
+  * Produces formatted shop-floor pull sheets matching Corporate Interiors shop standards.
   * Direct-to-machine list items formatted as `(Quantity) Thickness Material Title (Dimensions)`.
-  * Framed 3-tier Spray Booth layup cards displaying top face, core, and backer separated by divider lines, thickness, explicit inches offcut dimensions, and grain direction.
+  * Framed 3-tier Spray Booth layup cards displaying top face, core, and backer separated by divider lines (with **Face Up** always on top), thickness, explicit inches offcut dimensions, and grain direction.
   * Native `@media print` CSS stylesheet for printing or saving as PDF via `window.print()`.
 
 ---
@@ -39,16 +43,15 @@ Pull Sheet Wizard/
 ├── server.ps1              # Local PowerShell HTTP listener server (API routes & static file server)
 ├── README.md               # Project documentation & setup instructions
 ├── .gitignore              # Git ignore rules for OS and temporary files
-├── public/                 # Root frontend single-page application assets
-│   ├── index.html          # Application UI markup & layout
+├── public/                 # Web application frontend single-page application assets
+│   ├── index.html          # Corporate Interiors UI markup & layout
 │   ├── style.css           # Premium dark mode theme & @media print styles
-│   └── app.js              # Parser logic, wizard state, and print renderer
-├── v2 No DB/               # Iterated v2 standalone release (Printable Report Generator)
-│   ├── run.bat             # v2 launcher script
-│   ├── server.ps1          # v2 PowerShell server
-│   └── public/             # v2 frontend assets & report templates
-├── demo-project/           # Sample test project folders (Homag, Holzher CNC, Holzher Beam Saw)
-└── Change Requests/        # Technical change request documents (v1 to v7)
+│   ├── app.js              # Parser logic, wizard state, and print renderer
+│   ├── logo.png            # Corporate Interiors branding logo
+│   └── favicon.ico         # Application favicon icon
+├── demo files/             # Demo test project folders (Beam Saw, Homag Router)
+├── demo-project/           # Sample test project folders
+└── Change Requests/        # Technical change request documents (v1 to v9)
 ```
 
 ---
@@ -56,7 +59,7 @@ Pull Sheet Wizard/
 ## 🚀 Quick Start & Local Execution
 
 ### Method 1: Using `run.bat` (Recommended)
-Double-click `run.bat` (or `v2 No DB/run.bat`) to launch the server window and open the dashboard in your default browser automatically.
+Double-click `run.bat` to launch the server window and open the dashboard in your default browser automatically.
 
 ### Method 2: Manual PowerShell Launch
 Open PowerShell in the project directory and execute:
