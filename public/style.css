@@ -573,6 +573,17 @@ tr:hover td {
   transform: scale(1.1);
 }
 
+.btn-rename-material {
+  opacity: 0.6;
+}
+
+.btn-rename-material:hover {
+  opacity: 1;
+  background-color: var(--primary-glow) !important;
+  color: var(--primary) !important;
+  transform: scale(1.1);
+}
+
 .wizard-card-title h4 {
   font-family: var(--font-display);
   font-size: 16px;

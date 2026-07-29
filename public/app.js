@@ -935,7 +935,15 @@ function buildWizard() {
     card.innerHTML = `
       <div class="wizard-card-header" style="display: flex; justify-content: space-between; align-items: flex-start;">
         <div class="wizard-card-title">
-          <h4>${name}</h4>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h4 class="material-card-name">${name}</h4>
+            <button class="btn-rename-material" title="Rename material card" style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 4px; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+              </svg>
+            </button>
+          </div>
           <p>Target Machine: <strong style="color: var(--secondary);">${mat.machine_type}</strong></p>
         </div>
         <button class="btn-delete-material" title="Delete material card from memory" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 6px; border-radius: 6px; transition: all 0.2s ease; display: flex; align-items: center; justify-content: center;">
@@ -1065,6 +1073,37 @@ function buildWizard() {
       updateDatabasePreview();
       saveSessionCache();
     });
+
+    const renameBtn = card.querySelector('.btn-rename-material');
+    if (renameBtn) {
+      renameBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const newName = prompt(`Rename material card "${name}":`, name);
+        if (newName !== null && newName.trim() !== '' && newName.trim() !== name) {
+          const trimmedName = newName.trim();
+          
+          const matData = state.materials[name];
+          matData.name = trimmedName;
+          matData.key = trimmedName;
+          
+          const newThickness = parseThicknessFromName(trimmedName);
+          if (newThickness !== 0.75 || matData.thickness === 0.75) {
+            matData.thickness = newThickness;
+          }
+
+          state.materials[trimmedName] = matData;
+          delete state.materials[name];
+
+          displayScanResults();
+          buildWizard();
+          updateDatabasePreview();
+          renderPullSheetReport();
+          saveSessionCache();
+
+          showToast('Material Renamed', `Renamed "${name}" to "${trimmedName}".`, 'success');
+        }
+      });
+    }
 
     const deleteBtn = card.querySelector('.btn-delete-material');
     if (deleteBtn) {
