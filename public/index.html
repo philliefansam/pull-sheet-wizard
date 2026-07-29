@@ -63,7 +63,11 @@
           <h1>Pull Sheet Wizard</h1>
           <p>Scans routing, parses sheet limits & aggregates layup configurations</p>
         </div>
-        <div class="header-status">
+        <div class="header-status" style="display: flex; align-items: center; gap: 16px;">
+          <button id="btn-reset-project" class="btn btn-danger" style="display: flex; align-items: center; gap: 6px; font-weight: 600;" title="Clear cache and reset all fields to start a new project">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
+            Reset / New Project
+          </button>
           <div class="status-indicator offline" id="connection-status">
             <span class="indicator-dot"></span>
             <span class="indicator-text">Checking server connection...</span>

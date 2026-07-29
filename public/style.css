@@ -387,6 +387,17 @@ input[type="text"]:focus, select:focus {
   transform: translateY(-1px);
 }
 
+.btn-danger {
+  background-color: var(--danger);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(244, 67, 54, 0.4);
+}
+
+.btn-danger:hover {
+  background-color: #d32f2f;
+  transform: translateY(-1px);
+}
+
 .btn-large {
   padding: 14px 28px;
   font-size: 16px;

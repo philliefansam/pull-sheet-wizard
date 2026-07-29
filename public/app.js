@@ -121,6 +121,11 @@ function setupEventListeners() {
   document.getElementById('btn-generate-demo').addEventListener('click', handleGenerateDemo);
   document.getElementById('btn-export-sqlite').addEventListener('click', handleExportSqlite);
   
+  const btnReset = document.getElementById('btn-reset-project');
+  if (btnReset) {
+    btnReset.addEventListener('click', handleResetProject);
+  }
+  
   const btnPrint = document.getElementById('btn-print-pull-sheet');
   if (btnPrint) {
     btnPrint.addEventListener('click', handlePrintPullSheet);
@@ -228,6 +233,110 @@ function setupEventListeners() {
       document.getElementById(tabId).classList.remove('hidden');
     });
   });
+}
+
+// Reset all project fields, state, and session cache to start a new project
+function handleResetProject() {
+  if (confirm('Are you sure you want to reset all fields and clear cached project data to start a new project?')) {
+    // 1. Clear session cache from localStorage
+    localStorage.removeItem('pull_sheet_wizard_session');
+
+    // 2. Reset global state object
+    const savedOperator = state.metadata ? state.metadata.operatorName : '';
+    state.files = [];
+    state.scannedFiles = [];
+    state.materials = {};
+    state.pastedPath = '';
+    state.metadata = {
+      jobNumber: '',
+      client: '',
+      projectName: '',
+      operatorName: savedOperator || '',
+      dateProcessed: new Date().toLocaleDateString('en-US')
+    };
+
+    // 3. Reset target folder path inputs
+    const pathsContainer = document.getElementById('paths-list-container');
+    if (pathsContainer) {
+      pathsContainer.innerHTML = `
+        <div class="path-input-row" style="display: flex; gap: 8px; align-items: center;">
+          <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="">
+          <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      `;
+      const addBtn = document.getElementById('btn-add-path-field');
+      if (addBtn) {
+        addBtn.addEventListener('click', () => {
+          const row = document.createElement('div');
+          row.className = 'path-input-row';
+          row.style.display = 'flex';
+          row.style.gap = '8px';
+          row.style.alignItems = 'center';
+          row.innerHTML = `
+            <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
+            <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          `;
+          pathsContainer.appendChild(row);
+          row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
+            row.remove();
+            saveSessionCache();
+          });
+          saveSessionCache();
+        });
+      }
+    }
+
+    // 4. Reset Project Details metadata input fields
+    const metaJob = document.getElementById('meta-job-number');
+    if (metaJob) metaJob.value = '';
+    const metaClient = document.getElementById('meta-client');
+    if (metaClient) metaClient.value = '';
+    const metaPrj = document.getElementById('meta-project-name');
+    if (metaPrj) metaPrj.value = '';
+    const metaOp = document.getElementById('meta-operator-name');
+    if (metaOp) metaOp.value = savedOperator || '';
+    const metaDate = document.getElementById('meta-date-processed');
+    if (metaDate) metaDate.value = state.metadata.dateProcessed;
+
+    // 5. Clear scan results & file tables
+    const detectedMaterials = document.getElementById('detected-materials');
+    if (detectedMaterials) detectedMaterials.innerHTML = '';
+    const discoveredFilesBody = document.getElementById('discovered-files-body');
+    if (discoveredFilesBody) discoveredFilesBody.innerHTML = '';
+    const scanResults = document.getElementById('scan-results');
+    if (scanResults) scanResults.classList.add('hidden');
+
+    // 6. Clear Lay-Up Wizard & Pull Sheet Report
+    const wizardSteps = document.getElementById('wizard-steps');
+    if (wizardSteps) wizardSteps.innerHTML = '';
+    const reportContainer = document.getElementById('pull-sheet-report-container');
+    if (reportContainer) reportContainer.innerHTML = '';
+
+    // 7. Clear SQLite Preview Tables
+    const dbMetadataRows = document.getElementById('db-metadata-rows');
+    if (dbMetadataRows) dbMetadataRows.innerHTML = '';
+    const dbSummaryRows = document.getElementById('db-summary-rows');
+    if (dbSummaryRows) dbSummaryRows.innerHTML = '';
+
+    // 8. Reset active navigation tab and section visibility
+    document.querySelectorAll('main > .content-body > section').forEach(sec => {
+      if (sec.id === 'section-scan') {
+        sec.classList.remove('hidden');
+      } else {
+        sec.classList.add('hidden');
+      }
+    });
+
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    const navDashboard = document.getElementById('nav-dashboard') || document.getElementById('nav-scan');
+    if (navDashboard) navDashboard.classList.add('active');
+
+    showToast('Project Reset', 'All cached data, paths, and material fields have been cleared.', 'info');
+  }
 }
 
 // Generate Demo Files
