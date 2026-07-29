@@ -2044,7 +2044,27 @@ function renderPullSheetReport() {
 
 function handlePrintPullSheet() {
   renderPullSheetReport();
+  
+  const rawJobName = (state.metadata.jobNumber && state.metadata.jobNumber.trim())
+    ? state.metadata.jobNumber.trim()
+    : ((state.metadata.projectName && state.metadata.projectName.trim()) 
+        ? state.metadata.projectName.trim() 
+        : 'Project');
+        
+  // Clean any invalid filename characters so operating system save dialog handles it smoothly
+  const cleanJobName = rawJobName.replace(/[/\\?%*:|"<>]/g, '-').trim();
+  const targetTitle = `Pull Sheet - ${cleanJobName}`;
+  const originalTitle = document.title;
+  
+  // Set document title dynamically so browser PDF export defaults to "Pull Sheet - $jobname.pdf"
+  document.title = targetTitle;
+  
   window.print();
+  
+  // Restore document title after print dialog
+  setTimeout(() => {
+    document.title = originalTitle;
+  }, 1000);
 }
 
 // Cache session state so user input is preserved across navigation tabs and setting changes
