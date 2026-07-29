@@ -933,11 +933,19 @@ function buildWizard() {
     const isRaw = mat.layup_required === 0;
     
     card.innerHTML = `
-      <div class="wizard-card-header">
+      <div class="wizard-card-header" style="display: flex; justify-content: space-between; align-items: flex-start;">
         <div class="wizard-card-title">
           <h4>${name}</h4>
           <p>Target Machine: <strong style="color: var(--secondary);">${mat.machine_type}</strong></p>
         </div>
+        <button class="btn-delete-material" title="Delete material card from memory" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 6px; border-radius: 6px; transition: all 0.2s ease; display: flex; align-items: center; justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            <line x1="10" y1="11" x2="10" y2="17"></line>
+            <line x1="14" y1="11" x2="14" y2="17"></line>
+          </svg>
+        </button>
       </div>
       
       <div class="layup-fields">
@@ -1057,6 +1065,22 @@ function buildWizard() {
       updateDatabasePreview();
       saveSessionCache();
     });
+
+    const deleteBtn = card.querySelector('.btn-delete-material');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Are you sure you want to delete "${name}" from memory and pull sheet listings?`)) {
+          delete state.materials[name];
+          displayScanResults();
+          buildWizard();
+          updateDatabasePreview();
+          renderPullSheetReport();
+          saveSessionCache();
+          showToast('Material Deleted', `"${name}" removed from project memory.`, 'info');
+        }
+      });
+    }
     
     stepsContainer.appendChild(card);
   });

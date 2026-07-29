@@ -562,6 +562,17 @@ tr:hover td {
   margin-bottom: 20px;
 }
 
+.btn-delete-material {
+  opacity: 0.6;
+}
+
+.btn-delete-material:hover {
+  opacity: 1;
+  background-color: rgba(239, 68, 68, 0.15) !important;
+  color: #f87171 !important;
+  transform: scale(1.1);
+}
+
 .wizard-card-title h4 {
   font-family: var(--font-display);
   font-size: 16px;
