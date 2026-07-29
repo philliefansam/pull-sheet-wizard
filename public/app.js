@@ -613,7 +613,7 @@ function parseThicknessFromName(name) {
   if (!name) return 0.75;
   const cleanName = name.trim();
   
-  const matchWholeFrac = cleanName.match(/^(\d+)[\s-]+(\d+)[-/](\d+)/);
+  const matchWholeFrac = cleanName.match(/^(\d+)[\s-]+(\d+)[-/](\d+)(?![a-zA-Z])/);
   if (matchWholeFrac) {
     const whole = parseFloat(matchWholeFrac[1]);
     const num = parseFloat(matchWholeFrac[2]);
@@ -621,7 +621,7 @@ function parseThicknessFromName(name) {
     if (den !== 0) return parseFloat((whole + (num / den)).toFixed(4));
   }
   
-  const matchFrac = cleanName.match(/^(\d+)[-/](\d+)/);
+  const matchFrac = cleanName.match(/^(\d+)[-/](\d+)(?![a-zA-Z])/);
   if (matchFrac) {
     const num = parseFloat(matchFrac[1]);
     const den = parseFloat(matchFrac[2]);
@@ -1814,7 +1814,9 @@ function renderPullSheetReport() {
   function cleanMaterialTitle(name) {
     if (!name) return '';
     let cleaned = name.replace(/\s*\([^)]*(beam\s*saw|cnc|nest|homag|holzher)[^)]*\)/i, '');
-    cleaned = cleaned.replace(/^(\d+[\s-]+\d+[\s/-]+\d+|\d+[\s/-]+\d+)\s*/i, '').trim();
+    // Remove leading thickness fraction/decimal prefixes while preserving 2S, 1S, S2S designations
+    cleaned = cleaned.replace(/^(\d+[\s-]+\d+[-/]\d+(?![a-zA-Z])|\d+[-/]\d+(?![a-zA-Z])|\d+\.\d+|\d+["”']?)\s*/i, '').trim();
+    cleaned = cleaned.replace(/^["”']\s*/, '').trim();
     return cleaned || name;
   }
 
