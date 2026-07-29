@@ -1695,18 +1695,21 @@ function renderPullSheetReport() {
     return `${val}"`;
   }
 
-  // Format dimension bounds string (exact footage: (5x10), (4x8); non-exact footage: explicit inches (44"x120"))
+  // Format dimension bounds string (exact footage: (5x10), (5x9), (4x8); non-exact footage: explicit inches (44"x120"))
   function formatBoundsStr(fLen, fWid) {
     const len = Math.max(fLen || 0, fWid || 0);
     const wid = Math.min(fLen || 0, fWid || 0);
     
-    // Check if the calculated offcut size (fLen, fWid) in material_summary is an exact full stock sheet (5x10 or 4x8)
+    // Check if the calculated offcut size (fLen, fWid) in material_summary is an exact full stock sheet (5x10, 5x9, or 4x8)
     const isFull5x10 = (Math.abs(len - 121) <= 1.5 || Math.abs(len - 120) <= 1.5) && 
                        (Math.abs(wid - 61) <= 1.5 || Math.abs(wid - 60) <= 1.5);
-    const isFull4x8 = (Math.abs(len - 96) <= 1.5) && (Math.abs(wid - 48) <= 1.5);
+    const isFull5x9  = (Math.abs(len - 109) <= 1.5 || Math.abs(len - 108) <= 1.5) && 
+                       (Math.abs(wid - 61) <= 1.5 || Math.abs(wid - 60) <= 1.5);
+    const isFull4x8  = (Math.abs(len - 96) <= 1.5) && (Math.abs(wid - 48) <= 1.5);
 
     if (isFull5x10) return '(5x10)';
-    if (isFull4x8) return '(4x8)';
+    if (isFull5x9)  return '(5x9)';
+    if (isFull4x8)  return '(4x8)';
     
     // Non-full stock offcut sizes: always use explicit inches so layup operator knows exact dimensions (e.g. 44"x120", 25"x120")
     const renderWid = wid > 0 ? Math.round(wid) : 48;
@@ -1761,7 +1764,7 @@ function renderPullSheetReport() {
           rowsToRender.forEach(r => {
             const thickStr = formatThicknessStr(r.thickness || 0.75);
             const boundsStr = formatBoundsStr(r.final_length, r.final_width, r.raw_max_x, r.raw_max_y);
-            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(4x8)');
+            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(5x9)') && !boundsStr.includes('(4x8)');
             const offcutNote = isCustomSize ? ' - If offcut is available' : '';
 
             html += `
@@ -1841,7 +1844,7 @@ function renderPullSheetReport() {
             }
 
             const grainDisplay = r.grain_direction === 'No Grain' ? 'No Grain' : `${r.grain_direction || 'Horizontal'} Grain`;
-            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(4x8)');
+            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(5x9)') && !boundsStr.includes('(4x8)');
             const offcutNoteHtml = isCustomSize ? `<div style="font-size: 11px; font-weight: normal; margin-top: 2px; color: #d32f2f; font-style: italic;">If offcut is available</div>` : '';
 
             html += `
