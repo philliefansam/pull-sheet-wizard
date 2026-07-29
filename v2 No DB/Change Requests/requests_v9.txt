@@ -1,0 +1,8 @@
+## Changes to make
+
+-for the demo BAM project, 15/16" MDF for the Beam Saw generates 2 material cards
+	-- one of which is the accurate 10 sheet listing
+	-- the other one is "Sheet 1 (Default Sheet):" which should not exist.
+
+-for the demo BAM project, "3-4 Raw PB (Homag)" has only qty. (11) sheets.
+	-- gcode files beginning with a lowercase "r" e.g. "r7Nb0024.mpr" should be excluded from material counts. they are "re-introduction" or "re-intro" files wherein a part is reintroduced to the CNC after being cut (needing no extra material).

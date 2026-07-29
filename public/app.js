@@ -620,8 +620,14 @@ function processScannedFiles() {
     const mat = state.materials[key];
     mat.files.push(file);
     
-    const nameLower = file.name.toLowerCase();
-    const ext = nameLower.split('.').pop();
+    const fileName = file.name || '';
+    const ext = fileName.split('.').pop().toLowerCase();
+    const isReintro = fileName.length > 0 && fileName.charAt(0) === 'r';
+    
+    if (isReintro) {
+      file.isReintro = true;
+      return;
+    }
     
     // Parse individual files
     if (ext === 'mpr') {
@@ -658,7 +664,7 @@ function processScannedFiles() {
         final_length: parsed.recommended_length,
         final_width: parsed.recommended_width
       });
-    } else if (ext === 'cpout' || ext === 'cpl' || nameLower.includes('cpout')) {
+    } else if (ext === 'cpout' || ext === 'cpl' || fileName.toLowerCase().includes('cpout')) {
       const parsed = parseCPOUT(file.content);
       mat.raw_max_x = Math.max(mat.raw_max_x, parsed.raw_max_x);
       mat.raw_max_y = Math.max(mat.raw_max_y, parsed.raw_max_y);
@@ -702,11 +708,20 @@ function processScannedFiles() {
     }
   });
   
-  // Post-process sheets array if no CNC files populated it
+  // Post-process sheets array and prune phantom empty materials
   Object.keys(state.materials).forEach(key => {
     const mat = state.materials[key];
-    if (mat.sheets.length === 0) {
-      if (mat.pullSheetData && mat.pullSheetData.length > 0) {
+    const hasCncFiles = mat.files.some(f => {
+      if (f.isReintro) return false;
+      const ext = f.name.split('.').pop().toLowerCase();
+      return ['mpr', 'hop', 'cpout', 'cpl'].includes(ext) || f.name.toLowerCase().includes('cpout');
+    });
+    const hasPullData = mat.pullSheetData && mat.pullSheetData.length > 0;
+    
+    if (mat.sheets.length === 0 && !hasCncFiles && !hasPullData) {
+      delete state.materials[key];
+    } else if (mat.sheets.length === 0 && (hasCncFiles || hasPullData)) {
+      if (hasPullData) {
         mat.pullSheetData.forEach((item, index) => {
           mat.sheets.push({
             fileName: item.material_name || `Pull Sheet Nest ${index + 1}`,
@@ -717,16 +732,6 @@ function processScannedFiles() {
             final_length: item.dimensions.length_in || 0,
             final_width: item.dimensions.width_in || 0
           });
-        });
-      } else {
-        mat.sheets.push({
-          fileName: 'Default Sheet',
-          raw_max_x: mat.raw_max_x || 96.0,
-          raw_max_y: mat.raw_max_y || 48.0,
-          net_length: mat.final_length || 0,
-          net_width: mat.final_width || 0,
-          final_length: mat.final_length || 0,
-          final_width: mat.final_width || 0
         });
       }
     }
@@ -756,11 +761,15 @@ function displayScanResults() {
     mat.files.forEach(f => {
       const ext = f.name.split('.').pop().toUpperCase();
       const tr = document.createElement('tr');
+      const statusBadge = f.isReintro 
+        ? `<span class="badge badge-warning" style="background: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.3);">Re-Intro (Excluded)</span>`
+        : `<span class="status-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> Parsed</span>`;
+
       tr.innerHTML = `
         <td>${name}</td>
         <td>${f.name}</td>
         <td><span class="badge badge-${ext.toLowerCase()}">${ext}</span></td>
-        <td><span class="status-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> Parsed</span></td>
+        <td>${statusBadge}</td>
       `;
       fileBody.appendChild(tr);
     });
