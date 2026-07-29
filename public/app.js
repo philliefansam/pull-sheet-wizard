@@ -844,11 +844,11 @@ function buildWizard() {
         <div class="form-row-grid">
           <div class="form-group">
             <label>Face Up Veneer/Laminate</label>
-            <input type="text" class="input-backer" placeholder="Face Up Veneer/Laminate" value="${mat.backer_material || ''}" ${isRaw ? 'disabled' : ''}>
+            <input type="text" class="input-face" placeholder="Face Up Veneer/Laminate" value="${mat.face_material || ''}" ${isRaw ? 'disabled' : ''}>
           </div>
           <div class="form-group">
             <label>Face Down Veneer/Laminate</label>
-            <input type="text" class="input-face" placeholder="Face Down Veneer/Laminate" value="${mat.face_material || ''}" ${isRaw ? 'disabled' : ''}>
+            <input type="text" class="input-backer" placeholder="Face Down Veneer/Laminate" value="${mat.backer_material || ''}" ${isRaw ? 'disabled' : ''}>
           </div>
         </div>
         
@@ -1756,9 +1756,9 @@ function renderPullSheetReport() {
           const consolidatedRows = getConsolidatedMaterialRows().filter(r => r.material_name === mat.name && r.machine_type === mat.machine_type);
           const rowsToRender = consolidatedRows.length > 0 ? consolidatedRows : [{
             quantity: mat.sheets ? mat.sheets.length : 1,
-            faceUp_matl: mat.backer_material || 'BKR',
+            faceUp_matl: mat.face_material || 'VENEER',
             core_substrate: mat.core_substrate || 'PB',
-            faceDown_matl: mat.face_material || 'VENEER',
+            faceDown_matl: mat.backer_material || 'BKR',
             thickness: mat.thickness || 0.75,
             grain_direction: mat.grain_direction || 'Horizontal',
             final_length: mat.final_length,
@@ -1770,9 +1770,9 @@ function renderPullSheetReport() {
           rowsToRender.forEach(r => {
             const thickStr = formatThicknessStr(r.thickness || 0.75);
             const boundsStr = formatBoundsStr(r.final_length, r.final_width, r.raw_max_x, r.raw_max_y);
-            const faceUp = r.faceUp_matl || 'BKR';
+            const faceUp = r.faceUp_matl || 'VENEER';
             const core = r.core_substrate || 'PB';
-            const faceDown = r.faceDown_matl || 'VENEER';
+            const faceDown = r.faceDown_matl || 'BKR';
             
             const grainDisplay = r.grain_direction === 'No Grain' ? 'No Grain' : `${r.grain_direction || 'Horizontal'} Grain`;
 
