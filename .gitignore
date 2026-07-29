@@ -3,6 +3,10 @@
 Thumbs.db
 desktop.ini
 
+# Private Architecture Documentation
+docs_private/
+private_docs/
+
 # System logs and temporary files
 *.log
 *.tmp
