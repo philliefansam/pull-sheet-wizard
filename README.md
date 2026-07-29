@@ -1,6 +1,6 @@
 # Pull Sheet Wizard
 
-A web application served by a local PowerShell HTTP listener backend that recursively scans project directories, parses CNC and Beam Saw machine files (`.mpr`, `.hop`, `.cpout`), aggregates toolpath bounding dimensions, and interactively generates printable shop-floor **Pull Sheets** and **Lay-Up Specifications**.
+A web application served by a local PowerShell HTTP listener backend that recursively scans project directories, parses CNC and Beam Saw machine files (`.mpr`, `.hop`, `.cpout`), aggregates toolpath bounding dimensions, and interactively generates printable shop-floor **Pull Sheets** and **Lay-Up Specifications** for use in material inventory picking.
 
 ---
 
