@@ -3,9 +3,11 @@
 Thumbs.db
 desktop.ini
 
-# Private Architecture Documentation
+# Private & Change Request Documentation
 docs_private/
 private_docs/
+Change Requests/
+change requests/
 
 # System logs and temporary files
 *.log
