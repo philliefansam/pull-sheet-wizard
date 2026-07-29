@@ -1,4 +1,4 @@
-# Corporate Interiors - Pull Sheet Wizard
+# Pull Sheet Wizard
 
 A web application served by a local PowerShell HTTP listener backend that recursively scans project directories, parses CNC and Beam Saw machine files (`.mpr`, `.hop`, `.cpout`), aggregates toolpath bounding dimensions, and interactively generates printable shop-floor **Pull Sheets** and **Lay-Up Specifications**.
 
@@ -28,7 +28,7 @@ A web application served by a local PowerShell HTTP listener backend that recurs
   * Auto-consolidates matching sheet sizes with quantity counters.
 
 * **Browser-Native Printable Pull Sheet Reports**:
-  * Produces formatted shop-floor pull sheets matching Corporate Interiors shop standards.
+  * Produces formatted shop-floor pull sheets matching physical shop standards.
   * Direct-to-machine list items formatted as `(Quantity) Thickness Material Title (Dimensions)`.
   * Framed 3-tier Spray Booth layup cards displaying top face, core, and backer separated by divider lines (with **Face Up** always on top), thickness, explicit inches offcut dimensions, and grain direction.
   * Native `@media print` CSS stylesheet for printing or saving as PDF via `window.print()`.
@@ -44,10 +44,10 @@ Pull Sheet Wizard/
 ├── README.md               # Project documentation & setup instructions
 ├── .gitignore              # Git ignore rules for OS and temporary files
 ├── public/                 # Web application frontend single-page application assets
-│   ├── index.html          # Corporate Interiors UI markup & layout
+│   ├── index.html          # Application UI markup & layout
 │   ├── style.css           # Premium dark mode theme & @media print styles
 │   ├── app.js              # Parser logic, wizard state, and print renderer
-│   ├── logo.png            # Corporate Interiors branding logo
+│   ├── logo.png            # Branding logo asset
 │   └── favicon.ico         # Application favicon icon
 ├── demo files/             # Demo test project folders (Beam Saw, Homag Router)
 ├── demo-project/           # Sample test project folders
