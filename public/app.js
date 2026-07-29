@@ -813,7 +813,9 @@ function buildWizard() {
     // Normalize core substrate state
     if (!mat.core_substrate) {
       // Try to match or default to PB
-      if (name.toUpperCase().includes('PB')) mat.core_substrate = 'PB';
+      if (name.toUpperCase().includes('BMCP')) mat.core_substrate = 'BMCP';
+      else if (name.toUpperCase().includes('WMCP')) mat.core_substrate = 'WMCP';
+      else if (name.toUpperCase().includes('PB')) mat.core_substrate = 'PB';
       else if (name.toUpperCase().includes('MDF')) mat.core_substrate = 'MDF';
       else if (name.toUpperCase().includes('PLY') || name.toUpperCase().includes('WOOD')) mat.core_substrate = 'Ply';
       else mat.core_substrate = 'PB';
@@ -837,6 +839,8 @@ function buildWizard() {
               <option value="PB" ${mat.core_substrate === 'PB' ? 'selected' : ''}>Particle Board (PB)</option>
               <option value="MDF" ${mat.core_substrate === 'MDF' ? 'selected' : ''}>MDF</option>
               <option value="Ply" ${mat.core_substrate === 'Ply' || mat.core_substrate === 'Plywood' ? 'selected' : ''}>Plywood (Ply)</option>
+              <option value="BMCP" ${mat.core_substrate === 'BMCP' ? 'selected' : ''}>BMCP (Black MCP)</option>
+              <option value="WMCP" ${mat.core_substrate === 'WMCP' ? 'selected' : ''}>WMCP (White MCP)</option>
             </select>
           </div>
           <div class="form-group">
@@ -1792,25 +1796,58 @@ function renderPullSheetReport() {
           rowsToRender.forEach(r => {
             const thickStr = formatThicknessStr(r.thickness || 0.75);
             const boundsStr = formatBoundsStr(r.final_length, r.final_width, r.raw_max_x, r.raw_max_y);
-            const faceUp = r.faceUp_matl || 'VENEER';
+            const faceUp = r.faceUp_matl;
             const core = r.core_substrate || 'PB';
-            const faceDown = r.faceDown_matl || 'BKR';
+            const faceDown = r.faceDown_matl;
+            const isMcpCore = (core === 'BMCP' || core === 'WMCP');
             
-            const grainDisplay = r.grain_direction === 'No Grain' ? 'No Grain' : `${r.grain_direction || 'Horizontal'} Grain`;
+            let stackHtml = '';
+            if (isMcpCore) {
+              // 2-tier stack card for pre-bought 2-sided Black/White MCP core substrates
+              let topLayer = '';
+              let bottomLayer = '';
+              
+              if (faceUp && faceUp.trim() && faceUp.toUpperCase() !== core.toUpperCase()) {
+                topLayer = faceUp;
+                bottomLayer = (faceDown && faceDown.trim() && faceDown.toUpperCase() !== core.toUpperCase()) ? faceDown : core;
+              } else if (faceDown && faceDown.trim() && faceDown.toUpperCase() !== core.toUpperCase()) {
+                topLayer = core;
+                bottomLayer = faceDown;
+              } else {
+                topLayer = faceUp || 'LAMINATE';
+                bottomLayer = core;
+              }
+              
+              stackHtml = `
+                <div class="ps-layup-stack">
+                  <div class="ps-stack-tier">${topLayer}</div>
+                  <div class="ps-stack-divider"></div>
+                  <div class="ps-stack-tier">${bottomLayer}</div>
+                </div>
+              `;
+            } else {
+              // Standard 3-tier stack card (Face Up / Core Substrate / Face Down)
+              const displayFaceUp = faceUp || 'VENEER';
+              const displayFaceDown = faceDown || 'BKR';
+              stackHtml = `
+                <div class="ps-layup-stack">
+                  <div class="ps-stack-tier">${displayFaceUp}</div>
+                  <div class="ps-stack-divider"></div>
+                  <div class="ps-stack-tier">${core}</div>
+                  <div class="ps-stack-divider"></div>
+                  <div class="ps-stack-tier">${displayFaceDown}</div>
+                </div>
+              `;
+            }
 
+            const grainDisplay = r.grain_direction === 'No Grain' ? 'No Grain' : `${r.grain_direction || 'Horizontal'} Grain`;
             const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(4x8)');
             const offcutNoteHtml = isCustomSize ? `<div style="font-size: 11px; font-weight: normal; margin-top: 2px; color: #d32f2f; font-style: italic;">If offcut is available</div>` : '';
 
             html += `
               <div class="ps-layup-card">
                 <div class="ps-layup-qty">(${r.quantity})</div>
-                <div class="ps-layup-stack">
-                  <div class="ps-stack-tier">${faceUp}</div>
-                  <div class="ps-stack-divider"></div>
-                  <div class="ps-stack-tier">${core}</div>
-                  <div class="ps-stack-divider"></div>
-                  <div class="ps-stack-tier">${faceDown}</div>
-                </div>
+                ${stackHtml}
                 <div class="ps-layup-dims">
                   <div>${thickStr} ${boundsStr}</div>
                   ${offcutNoteHtml}
