@@ -2045,10 +2045,10 @@ function renderPullSheetReport() {
 function handlePrintPullSheet() {
   renderPullSheetReport();
   
-  const rawJobName = (state.metadata.jobNumber && state.metadata.jobNumber.trim())
-    ? state.metadata.jobNumber.trim()
-    : ((state.metadata.projectName && state.metadata.projectName.trim()) 
-        ? state.metadata.projectName.trim() 
+  const rawJobName = (state.metadata.projectName && state.metadata.projectName.trim())
+    ? state.metadata.projectName.trim()
+    : ((state.metadata.jobNumber && state.metadata.jobNumber.trim()) 
+        ? state.metadata.jobNumber.trim() 
         : 'Project');
         
   // Clean any invalid filename characters so operating system save dialog handles it smoothly
