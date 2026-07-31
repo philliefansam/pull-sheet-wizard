@@ -38,35 +38,62 @@ async function initApp() {
   // Restore session cache if present
   restoreSessionCache();
   
-  // Check backend server connection
-  await checkServerConnection();
+  // Check backend server connection and start live 3s heartbeat polling
+  await checkServerConnection(true);
+  setInterval(() => {
+    checkServerConnection(true);
+  }, 3000);
   
   // Load SQLite WASM
   await loadSqlWasm();
 }
 
-// Check if backend server is responsive
-async function checkServerConnection() {
+let isServerConnected = false;
+
+// Check if backend server is responsive with cache-busting and live heartbeat
+async function checkServerConnection(silent = false) {
   const statusEl = document.getElementById('connection-status');
+  if (!statusEl) return;
+
   try {
-    const res = await fetch('/api/status');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+    const res = await fetch('/api/status?_t=' + Date.now(), { 
+      cache: 'no-store',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
     if (res.ok) {
-      statusEl.className = 'status-indicator online';
-      statusEl.querySelector('.indicator-text').textContent = 'Server Connected';
+      if (!isServerConnected || statusEl.classList.contains('offline')) {
+        isServerConnected = true;
+        statusEl.className = 'status-indicator online';
+        statusEl.querySelector('.indicator-text').textContent = 'Server Connected';
+        if (!silent) {
+          showToast('Server Connected', 'Backend server connection established.', 'success');
+        }
+      }
       
       const data = await res.json();
       if (data.username && !state.metadata.operatorName) {
         state.metadata.operatorName = data.username;
-        document.getElementById('meta-operator-name').value = data.username;
+        const opInput = document.getElementById('meta-operator-name');
+        if (opInput) opInput.value = data.username;
         updateDatabasePreview();
       }
     } else {
-      throw new Error();
+      throw new Error('Non-200 response');
     }
   } catch (e) {
-    statusEl.className = 'status-indicator offline';
-    statusEl.querySelector('.indicator-text').textContent = 'Server Offline (Check console)';
-    showToast('Connection Error', 'Backend server could not be reached. Ensure server.ps1 is running.', 'error');
+    if (isServerConnected || statusEl.classList.contains('online')) {
+      isServerConnected = false;
+      statusEl.className = 'status-indicator offline';
+      statusEl.querySelector('.indicator-text').textContent = 'Server Offline';
+      if (!silent) {
+        showToast('Server Disconnected', 'Backend server is offline or unreachable.', 'error');
+      }
+    }
   }
 }
 
