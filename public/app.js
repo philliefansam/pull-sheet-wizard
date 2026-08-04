@@ -57,7 +57,7 @@ async function checkServerConnection(silent = false) {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     const res = await fetch('/api/status?_t=' + Date.now(), { 
       cache: 'no-store',
@@ -66,13 +66,13 @@ async function checkServerConnection(silent = false) {
     clearTimeout(timeoutId);
 
     if (res.ok) {
-      if (!isServerConnected || statusEl.classList.contains('offline')) {
-        isServerConnected = true;
-        statusEl.className = 'status-indicator online';
-        statusEl.querySelector('.indicator-text').textContent = 'Server Connected';
-        if (!silent) {
-          showToast('Server Connected', 'Backend server connection established.', 'success');
-        }
+      const wasOffline = !isServerConnected;
+      isServerConnected = true;
+      statusEl.className = 'status-indicator online';
+      statusEl.querySelector('.indicator-text').textContent = 'Server Connected';
+      
+      if (wasOffline && !silent) {
+        showToast('Server Connected', 'Backend server connection established.', 'success');
       }
       
       const data = await res.json();
@@ -86,13 +86,13 @@ async function checkServerConnection(silent = false) {
       throw new Error('Non-200 response');
     }
   } catch (e) {
-    if (isServerConnected || statusEl.classList.contains('online')) {
-      isServerConnected = false;
-      statusEl.className = 'status-indicator offline';
-      statusEl.querySelector('.indicator-text').textContent = 'Server Offline';
-      if (!silent) {
-        showToast('Server Disconnected', 'Backend server is offline or unreachable.', 'error');
-      }
+    const wasOnline = isServerConnected;
+    isServerConnected = false;
+    statusEl.className = 'status-indicator offline';
+    statusEl.querySelector('.indicator-text').textContent = 'Server Offline';
+    
+    if (wasOnline && !silent) {
+      showToast('Server Disconnected', 'Backend server is offline or unreachable.', 'error');
     }
   }
 }
