@@ -1520,8 +1520,8 @@ function parseMPR(content) {
     if (inHeader) {
       const matchL = line.match(/^l\s*=\s*"([\d.-]+)"/i);
       const matchW = line.match(/^w\s*=\s*"([\d.-]+)"/i);
-      if (matchL) raw_max_x = parseFloat(matchL[1]) / 25.4;
-      if (matchW) raw_max_y = parseFloat(matchW[1]) / 25.4;
+      if (matchL) raw_max_y = parseFloat(matchL[1]) / 25.4; // Board Length
+      if (matchW) raw_max_x = parseFloat(matchW[1]) / 25.4; // Board Width
     }
     
     // Parse coordinates (supports standard X=, Y=, XA=, YA= on standalone lines)
@@ -1531,28 +1531,28 @@ function parseMPR(content) {
     if (matchY) yCoords.push(parseFloat(matchY[1]) / 25.4);
   }
   
-  const net_length = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0;
-  const net_width = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0;
+  const net_x = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0; // Along Length
+  const net_y = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0; // Along Width
   
-  const recLength = calculateFinalDimension(net_length, raw_max_x);
-  const recWidth = calculateFinalDimension(net_width, raw_max_y);
+  const recWidth = calculateFinalDimension(net_y, raw_max_x); // Final cropped Width
+  const recLength = calculateFinalDimension(net_x, raw_max_y); // Final cropped Length
   
   return {
-    raw_max_x,
-    raw_max_y,
-    net_length,
-    net_width,
-    recommended_length: recLength,
-    recommended_width: recWidth
+    raw_max_x, // Board Width (Dimension 1)
+    raw_max_y, // Board Length (Dimension 2)
+    net_length: net_y, // UI maps this to calcFinX (Width)
+    net_width: net_x,  // UI maps this to calcFinY (Length)
+    recommended_length: recWidth, // UI maps this to finX (Width)
+    recommended_width: recLength  // UI maps this to finY (Length)
   };
 }
 
 // Holzher Dynestic Router (*.hop) Parser
 function parseHOP(content) {
-  let raw_max_x = 0;
-  let raw_max_y = 0;
-  const xCoords = [];
-  const yCoords = [];
+  let raw_max_y = 0; // Length (DX)
+  let raw_max_x = 0; // Width (DY)
+  const xCoords = []; // Length axis
+  const yCoords = []; // Width axis
   
   const lines = content.split(/\r?\n/);
   
@@ -1560,11 +1560,11 @@ function parseHOP(content) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     
-    // Extract sheet dimensions (DX and DY) inside VARS
+    // Extract sheet dimensions (DX = Length, DY = Width) inside VARS
     const matchDX = line.match(/\bDX\s*:=\s*([\d.-]+)/i);
     const matchDY = line.match(/\bDY\s*:=\s*([\d.-]+)/i);
-    if (matchDX) raw_max_x = parseFloat(matchDX[1]); // native inches
-    if (matchDY) raw_max_y = parseFloat(matchDY[1]); // native inches
+    if (matchDX) raw_max_y = parseFloat(matchDX[1]); // Board Length
+    if (matchDY) raw_max_x = parseFloat(matchDY[1]); // Board Width
     
     if (line === 'START') {
       isAfterStart = true;
@@ -1581,30 +1581,30 @@ function parseHOP(content) {
     }
   }
   
-  const net_length = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0;
-  const net_width = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0;
+  const net_x = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0; // Along Length
+  const net_y = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0; // Along Width
   
-  const recLength = calculateFinalDimension(net_length, raw_max_x);
-  const recWidth = calculateFinalDimension(net_width, raw_max_y);
+  const recWidth = calculateFinalDimension(net_y, raw_max_x); // Final cropped Width
+  const recLength = calculateFinalDimension(net_x, raw_max_y); // Final cropped Length
   
   return {
-    raw_max_x,
-    raw_max_y,
-    net_length,
-    net_width,
-    recommended_length: recLength,
-    recommended_width: recWidth
+    raw_max_x, // Board Width (Dimension 1)
+    raw_max_y, // Board Length (Dimension 2)
+    net_length: net_y, // UI maps this to calcFinX (Width)
+    net_width: net_x,  // UI maps this to calcFinY (Length)
+    recommended_length: recWidth, // UI maps this to finX (Width)
+    recommended_width: recLength  // UI maps this to finY (Length)
   };
 }
 
 // Holzher Beam Saw (*.cpout / *.cpl) Parser
 function parseCPOUT(content) {
-  let raw_max_x = 0;
-  let raw_max_y = 0;
+  let raw_max_y = 0; // Length
+  let raw_max_x = 0; // Width
   let sheet_count = 1;
   
-  const ordLengths = [];
-  const ordWidths = [];
+  const ordLengths = []; // Length axis
+  const ordWidths = []; // Width axis
   
   const lines = content.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
@@ -1619,32 +1619,32 @@ function parseCPOUT(content) {
           sheet_count = qty;
         }
       }
-      // 4th is RAW_MAX_Y, 5th is RAW_MAX_X (0-indexed 4 and 5)
-      if (parts[4]) raw_max_y = parseFloat(parts[4]);
-      if (parts[5]) raw_max_x = parseFloat(parts[5]);
+      // In beam saw CPOUT: parts[4] is Length (RAW_MAX_Y), parts[5] is Width (RAW_MAX_X)
+      if (parts[4]) raw_max_y = parseFloat(parts[4]); // Board Length
+      if (parts[5]) raw_max_x = parseFloat(parts[5]); // Board Width
     }
     
     if (parts[0] === 'ORD1') {
       // 3rd is Length, 4th is Width (0-indexed 3 and 4)
-      if (parts[3]) ordLengths.push(parseFloat(parts[3]));
-      if (parts[4]) ordWidths.push(parseFloat(parts[4]));
+      if (parts[3]) ordLengths.push(parseFloat(parts[3])); // Net lengths
+      if (parts[4]) ordWidths.push(parseFloat(parts[4])); // Net widths
     }
   }
   
-  const net_length = ordLengths.length > 0 ? Math.max(...ordLengths) : 0;
+  const net_l = ordLengths.length > 0 ? Math.max(...ordLengths) : 0; // Max net dimension along Length
   // Cumulate width stacks for beam saw
-  const net_width = ordWidths.reduce((a, b) => a + b, 0);
+  const net_w = ordWidths.reduce((a, b) => a + b, 0); // Cumulated dimension along Width
   
-  const recLength = calculateFinalDimension(net_length, raw_max_x);
-  const recWidth = calculateFinalDimension(net_width, raw_max_y);
+  const recWidth = calculateFinalDimension(net_w, raw_max_x); // Final cropped Width
+  const recLength = calculateFinalDimension(net_l, raw_max_y); // Final cropped Length
   
   return {
-    raw_max_x,
-    raw_max_y,
-    net_length,
-    net_width,
-    recommended_length: recLength,
-    recommended_width: recWidth,
+    raw_max_x, // Board Width (Dimension 1)
+    raw_max_y, // Board Length (Dimension 2)
+    net_length: net_w, // UI maps this to calcFinX (Width)
+    net_width: net_l,  // UI maps this to calcFinY (Length)
+    recommended_length: recWidth, // UI maps this to finX (Width)
+    recommended_width: recLength, // UI maps this to finY (Length)
     sheet_count
   };
 }
