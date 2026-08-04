@@ -877,25 +877,19 @@ function processScannedFiles() {
     const hasPullData = mat.pullSheetData && mat.pullSheetData.length > 0;
     
     if (hasPullData) {
-      // Primary source of truth for nest dimensions is the CncRun / Pull Sheet manifest (parts[2] = Board Width, parts[3] = Board Length)
+      // Primary source of truth for raw nest bounds is the CncRun / Pull Sheet manifest
       const sprayBoothItem = mat.pullSheetData.find(item => item.layup_required) || mat.pullSheetData[0];
       if (sprayBoothItem && sprayBoothItem.dimensions) {
         const bWidth = sprayBoothItem.dimensions.width_in || 85.0;
         const bLength = sprayBoothItem.dimensions.length_in || 74.0;
         
-        mat.final_length = bWidth;
-        mat.final_width = bLength;
-        mat.raw_max_x = bWidth;
-        mat.raw_max_y = bLength;
+        mat.raw_max_x = Math.max(mat.raw_max_x, bWidth);
+        mat.raw_max_y = Math.max(mat.raw_max_y, bLength);
         
-        // Synchronize all sheet dimensions to Board Width (bWidth) x Board Length (bLength)
+        // Ensure each sheet references authentic stock bounds
         mat.sheets.forEach(sheet => {
-          sheet.raw_max_x = bWidth;
-          sheet.raw_max_y = bLength;
-          sheet.final_length = bWidth;
-          sheet.final_width = bLength;
-          sheet.net_length = bWidth;
-          sheet.net_width = bLength;
+          if (!sheet.raw_max_x || sheet.raw_max_x === 0) sheet.raw_max_x = bWidth;
+          if (!sheet.raw_max_y || sheet.raw_max_y === 0) sheet.raw_max_y = bLength;
         });
       }
     }
@@ -1179,8 +1173,6 @@ function buildWizard() {
 // Helper to render wizard card dimensions badge
 function renderCardDimensionsBadge(mat) {
   const isWhole = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
-  const renderWidth = (mat.final_length && mat.final_length > 0) ? mat.final_length : 85.0;
-  const renderLength = (mat.final_width && mat.final_width > 0) ? mat.final_width : 74.0;
 
   return `
     <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed var(--border-color); padding-bottom: 8px; margin-bottom: 4px;">
@@ -1188,21 +1180,25 @@ function renderCardDimensionsBadge(mat) {
       <strong>${mat.sheets.length} sheet${mat.sheets.length > 1 ? 's' : ''}</strong>
     </div>
     ${mat.sheets.map((sheet, idx) => {
-      const sheetWid = (sheet.final_length && sheet.final_length > 0) ? sheet.final_length : renderWidth;
-      const sheetLen = (sheet.final_width && sheet.final_width > 0) ? sheet.final_width : renderLength;
-      
+      const rawX = Math.max(sheet.raw_max_x || 0, mat.raw_max_x || 0);
+      const rawY = Math.min(sheet.raw_max_y || 0, mat.raw_max_y || 0);
+
+      // Authentic recommended offcut size calculated from toolpath net span + shop overage
+      const finX = sheet.final_length || calculateFinalDimension(sheet.net_length, rawX) || rawX;
+      const finY = sheet.final_width || calculateFinalDimension(sheet.net_width, rawY) || rawY;
+
       if (isWhole) {
         return `
           <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
             <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
-            <span>Raw: <strong>${sheetWid.toFixed(1)}" x ${sheetLen.toFixed(1)}"</strong> | Final: <strong>${sheetWid.toFixed(1)}" x ${sheetLen.toFixed(1)}" (Whole Sheet)</strong></span>
+            <span>Raw: <strong>${rawX.toFixed(1)}" x ${rawY.toFixed(1)}"</strong> | Final: <strong>${rawX.toFixed(1)}" x ${rawY.toFixed(1)}" (Whole Sheet)</strong></span>
           </div>
         `;
       }
       return `
         <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
           <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
-          <span>Raw: <strong>${sheetWid.toFixed(1)}" x ${sheetLen.toFixed(1)}"</strong> | Final: <strong>${sheetWid.toFixed(1)}" x ${sheetLen.toFixed(1)}"</strong></span>
+          <span>Raw: <strong>${rawX.toFixed(1)}" x ${rawY.toFixed(1)}"</strong> | Final: <strong>${finX.toFixed(1)}" x ${finY.toFixed(1)}"</strong></span>
         </div>
       `;
     }).join('')}
