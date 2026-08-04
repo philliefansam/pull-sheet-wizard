@@ -20,54 +20,32 @@ const state = {
 
 const SHOP_CLEARANCE = 2.0;
 
-// Initialize when DOM is loaded or immediately if already parsed
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initApp);
-} else {
+// Initialize when DOM is loaded
+document.addEventListener('DOMContentLoaded', async () => {
   initApp();
-}
+});
 
 // App Entry Point
 async function initApp() {
-  try {
-    // Set default date
-    const today = new Date();
-    state.metadata.dateProcessed = today.toISOString().split('T')[0];
-    const dateInput = document.getElementById('meta-date-processed');
-    if (dateInput) dateInput.value = state.metadata.dateProcessed;
-    
-    // Set up event listeners
-    setupEventListeners();
+  // Set default date
+  const today = new Date();
+  state.metadata.dateProcessed = today.toISOString().split('T')[0];
+  document.getElementById('meta-date-processed').value = state.metadata.dateProcessed;
+  
+  // Set up event listeners
+  setupEventListeners();
 
-    // Restore session cache if present
-    restoreSessionCache();
-  } catch (e) {
-    console.warn('Initialization error in state/DOM setup:', e);
-  }
+  // Restore session cache if present
+  restoreSessionCache();
   
   // Check backend server connection and start live 3s heartbeat polling
-  try {
-    await checkServerConnection(true);
-  } catch (e) {
-    console.warn('Initial server check error:', e);
-  }
-
+  await checkServerConnection(true);
   setInterval(() => {
     checkServerConnection(true);
   }, 3000);
   
   // Load SQLite WASM
-  try {
-    await loadSqlWasm();
-  } catch (e) {
-    console.warn('SQLite WASM load error:', e);
-  }
-}
-
-// Helper to resolve backend server API URL (supports both http://localhost:9994/ and direct file:// protocol access)
-function getServerApiUrl(endpoint) {
-  const origin = (window.location.protocol === 'file:' || !window.location.host) ? 'http://localhost:9994' : '';
-  return `${origin}${endpoint}`;
+  await loadSqlWasm();
 }
 
 let isServerConnected = false;
@@ -79,23 +57,22 @@ async function checkServerConnection(silent = false) {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
 
-    const targetUrl = getServerApiUrl(`/api/status?_t=${Date.now()}`);
-    const res = await fetch(targetUrl, { 
+    const res = await fetch('/api/status?_t=' + Date.now(), { 
       cache: 'no-store',
       signal: controller.signal
     });
     clearTimeout(timeoutId);
 
     if (res.ok) {
-      const wasOffline = !isServerConnected;
-      isServerConnected = true;
-      statusEl.className = 'status-indicator online';
-      statusEl.querySelector('.indicator-text').textContent = 'Server Connected';
-      
-      if (wasOffline && !silent) {
-        showToast('Server Connected', 'Backend server connection established.', 'success');
+      if (!isServerConnected || statusEl.classList.contains('offline')) {
+        isServerConnected = true;
+        statusEl.className = 'status-indicator online';
+        statusEl.querySelector('.indicator-text').textContent = 'Server Connected';
+        if (!silent) {
+          showToast('Server Connected', 'Backend server connection established.', 'success');
+        }
       }
       
       const data = await res.json();
@@ -109,13 +86,13 @@ async function checkServerConnection(silent = false) {
       throw new Error('Non-200 response');
     }
   } catch (e) {
-    const wasOnline = isServerConnected;
-    isServerConnected = false;
-    statusEl.className = 'status-indicator offline';
-    statusEl.querySelector('.indicator-text').textContent = 'Server Offline';
-    
-    if (wasOnline && !silent) {
-      showToast('Server Disconnected', 'Backend server is offline or unreachable.', 'error');
+    if (isServerConnected || statusEl.classList.contains('online')) {
+      isServerConnected = false;
+      statusEl.className = 'status-indicator offline';
+      statusEl.querySelector('.indicator-text').textContent = 'Server Offline';
+      if (!silent) {
+        showToast('Server Disconnected', 'Backend server is offline or unreachable.', 'error');
+      }
     }
   }
 }
@@ -124,9 +101,8 @@ async function checkServerConnection(silent = false) {
 async function loadSqlWasm() {
   try {
     if (typeof initSqlJs !== 'undefined') {
-      const serverBase = getServerApiUrl('');
       state.SQL = await initSqlJs({
-        locateFile: file => `${serverBase}/public/${file}`
+        locateFile: file => `/public/${file}`
       });
       console.log('SQL.js initialized successfully.');
     } else {
@@ -453,8 +429,7 @@ async function handleScan() {
     
     // Fetch folders in parallel
     const scanPromises = paths.map(async (p) => {
-      const targetUrl = getServerApiUrl('/api/scan');
-      const res = await fetch(targetUrl, {
+      const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: p })
@@ -729,7 +704,7 @@ function detectFileMachine(file) {
   if (fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw')) {
     return 'Holzher Beam Saw';
   }
-  if (fullPathLower.includes('holzher cnc') || fullPathLower.includes('holzher_cnc') || fullPathLower.includes('holzher dynestic') || fullPathLower.includes('holzher') || fullPathLower.includes('dynestic') || fullPathLower.includes('locus')) {
+  if (fullPathLower.includes('holzher') || fullPathLower.includes('dynestic')) {
     return 'Holzher CNC';
   }
   if (fullPathLower.includes('homag')) {
@@ -741,7 +716,7 @@ function detectFileMachine(file) {
     if (upperContent.includes('THEN BEAM SAW') || upperContent.includes('BEAM SAW')) {
       return 'Holzher Beam Saw';
     }
-    if (upperContent.includes('THEN HOLZHER') || upperContent.includes('HOLZHER CNC') || upperContent.includes('HOLZHER') || upperContent.includes('DYNEST') || upperContent.includes('.HOP') || /^RF\d+/im.test(upperContent)) {
+    if (upperContent.includes('THEN HOLZHER') || upperContent.includes('HOLZHER CNC') || upperContent.includes('HOLZHER')) {
       return 'Holzher CNC';
     }
   }
@@ -767,31 +742,11 @@ function processScannedFiles() {
     });
   }
 
-  // Pre-pass: map material subfolder names to explicit CNC/saw machine types based on CNC file extensions
-  const folderMachineMap = {};
-  state.files.forEach(file => {
-    const matName = extractMaterialName(file.relativePath, file.scannedPath, file.content, file.name);
-    const ext = (file.name || '').split('.').pop().toLowerCase();
-    if (ext === 'hop') {
-      folderMachineMap[matName] = 'Holzher CNC';
-    } else if (ext === 'mpr' && !folderMachineMap[matName]) {
-      folderMachineMap[matName] = 'Homag';
-    } else if ((ext === 'cpout' || ext === 'cpl') && !folderMachineMap[matName]) {
-      folderMachineMap[matName] = 'Holzher Beam Saw';
-    }
-  });
-
   state.materials = {};
   
   state.files.forEach(file => {
     const materialName = extractMaterialName(file.relativePath, file.scannedPath, file.content, file.name);
-    let machineType = detectFileMachine(file);
-    
-    // If file is a manifest (.txt / .pull) and folder has explicit CNC/saw files (.hop, .mpr, .cpout), inherit folder machine type
-    const ext = (file.name || '').split('.').pop().toLowerCase();
-    if ((ext === 'txt' || ext === 'pull') && folderMachineMap[materialName]) {
-      machineType = folderMachineMap[materialName];
-    }
+    const machineType = detectFileMachine(file);
     
     // Create unique key based on material and machine to avoid grouping router and beam saw jobs together
     const key = `${materialName} (${machineType})`;
