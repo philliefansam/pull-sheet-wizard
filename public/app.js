@@ -1897,26 +1897,26 @@ function renderPullSheetReport() {
     return `${val}"`;
   }
 
-  // Format dimension bounds string (exact footage: (5x10), (5x9), (4x8); non-exact footage: explicit inches (44"x120"))
+  // Format dimension bounds string (exact footage: (5x10), (5x9), (4x8); non-exact footage: explicit inches preserving orientation (e.g. 85"x74"))
   function formatBoundsStr(fLen, fWid) {
-    const len = Math.max(fLen || 0, fWid || 0);
-    const wid = Math.min(fLen || 0, fWid || 0);
+    const maxDim = Math.max(fLen || 0, fWid || 0);
+    const minDim = Math.min(fLen || 0, fWid || 0);
     
-    // Check if the calculated offcut size (fLen, fWid) in material_summary is an exact full stock sheet (5x10, 5x9, or 4x8)
-    const isFull5x10 = (Math.abs(len - 121) <= 1.5 || Math.abs(len - 120) <= 1.5) && 
-                       (Math.abs(wid - 61) <= 1.5 || Math.abs(wid - 60) <= 1.5);
-    const isFull5x9  = (Math.abs(len - 109) <= 1.5 || Math.abs(len - 108) <= 1.5) && 
-                       (Math.abs(wid - 61) <= 1.5 || Math.abs(wid - 60) <= 1.5);
-    const isFull4x8  = (Math.abs(len - 96) <= 1.5) && (Math.abs(wid - 48) <= 1.5);
+    // Check if the calculated offcut size in material_summary is an exact full stock sheet (5x10, 5x9, or 4x8)
+    const isFull5x10 = (Math.abs(maxDim - 121) <= 1.5 || Math.abs(maxDim - 120) <= 1.5) && 
+                       (Math.abs(minDim - 61) <= 1.5 || Math.abs(minDim - 60) <= 1.5);
+    const isFull5x9  = (Math.abs(maxDim - 109) <= 1.5 || Math.abs(maxDim - 108) <= 1.5) && 
+                       (Math.abs(minDim - 61) <= 1.5 || Math.abs(minDim - 60) <= 1.5);
+    const isFull4x8  = (Math.abs(maxDim - 96) <= 1.5) && (Math.abs(minDim - 48) <= 1.5);
 
     if (isFull5x10) return '(5x10)';
     if (isFull5x9)  return '(5x9)';
     if (isFull4x8)  return '(4x8)';
     
-    // Non-full stock offcut sizes: always use explicit inches so layup operator knows exact dimensions (e.g. 44"x120", 25"x120")
-    const renderWid = wid > 0 ? Math.round(wid) : 48;
-    const renderLen = len > 0 ? Math.round(len) : 96;
-    return `(${renderWid}"x${renderLen}")`;
+    // Custom / non-stock offcut sizes: preserve explicit dimension order (e.g. 85"x74" vs 74"x85")
+    const renderLen = fLen ? Math.round(fLen) : 96;
+    const renderWid = fWid ? Math.round(fWid) : 48;
+    return `(${renderLen}"x${renderWid}")`;
   }
 
   let html = `
