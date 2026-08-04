@@ -877,19 +877,23 @@ function processScannedFiles() {
     const hasPullData = mat.pullSheetData && mat.pullSheetData.length > 0;
     
     if (hasPullData) {
-      // Primary source of truth for raw nest bounds is the CncRun / Pull Sheet manifest
+      // Primary source of truth for nest dimensions is the CncRun / Pull Sheet manifest
       const sprayBoothItem = mat.pullSheetData.find(item => item.layup_required) || mat.pullSheetData[0];
       if (sprayBoothItem && sprayBoothItem.dimensions) {
         const bWidth = sprayBoothItem.dimensions.width_in || 85.0;
         const bLength = sprayBoothItem.dimensions.length_in || 74.0;
         
-        mat.raw_max_x = Math.max(mat.raw_max_x, bWidth);
-        mat.raw_max_y = Math.max(mat.raw_max_y, bLength);
+        mat.raw_max_x = bWidth;
+        mat.raw_max_y = bLength;
+        mat.final_length = bWidth;
+        mat.final_width = bLength;
         
-        // Ensure each sheet references authentic stock bounds
+        // Ensure each sheet references manifest board dimensions
         mat.sheets.forEach(sheet => {
-          if (!sheet.raw_max_x || sheet.raw_max_x === 0) sheet.raw_max_x = bWidth;
-          if (!sheet.raw_max_y || sheet.raw_max_y === 0) sheet.raw_max_y = bLength;
+          sheet.raw_max_x = bWidth;
+          sheet.raw_max_y = bLength;
+          sheet.final_length = bWidth;
+          sheet.final_width = bLength;
         });
       }
     }
@@ -1180,12 +1184,11 @@ function renderCardDimensionsBadge(mat) {
       <strong>${mat.sheets.length} sheet${mat.sheets.length > 1 ? 's' : ''}</strong>
     </div>
     ${mat.sheets.map((sheet, idx) => {
-      const rawX = Math.max(sheet.raw_max_x || 0, mat.raw_max_x || 0);
-      const rawY = Math.min(sheet.raw_max_y || 0, mat.raw_max_y || 0);
+      const rawX = sheet.raw_max_x || mat.raw_max_x || 85.0;
+      const rawY = sheet.raw_max_y || mat.raw_max_y || 74.0;
 
-      // Authentic recommended offcut size calculated from toolpath net span + shop overage
-      const finX = sheet.final_length || calculateFinalDimension(sheet.net_length, rawX) || rawX;
-      const finY = sheet.final_width || calculateFinalDimension(sheet.net_width, rawY) || rawY;
+      const finX = sheet.final_length || rawX;
+      const finY = sheet.final_width || rawY;
 
       if (isWhole) {
         return `
