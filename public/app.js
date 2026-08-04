@@ -1658,6 +1658,11 @@ function parsePullSheet(content) {
       const parts = line.split(',');
       if (parts.length >= 6) {
         const fileName = parts[0].trim();
+        
+        // Ignore re-introduced individual parts starting with lowercase 'r' (e.g. rF6f0010)
+        const isReintroPart = fileName.length > 0 && fileName.charAt(0) === 'r';
+        if (isReintroPart) continue;
+
         const sheetTitle = parts[1].trim();
         const rawVal1 = parseFloat(parts[2]);
         const rawVal2 = parseFloat(parts[3]);
