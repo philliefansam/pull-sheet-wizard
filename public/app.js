@@ -1633,9 +1633,14 @@ function parsePullSheet(content) {
       if (parts.length >= 6) {
         const fileName = parts[0].trim();
         const sheetTitle = parts[1].trim();
-        const rawWidth = parseFloat(parts[2]) / 25.4; // mm to inches
-        const rawLength = parseFloat(parts[3]) / 25.4; // mm to inches
-        const thickness = parseFloat(parts[4]) / 25.4; // mm to inches
+        const rawVal1 = parseFloat(parts[2]);
+        const rawVal2 = parseFloat(parts[3]);
+        const rawThick = parseFloat(parts[4]);
+        
+        // Auto-detect unit: if values > 150 they are in millimeters (e.g. 2440x1220 mm); if <= 150 they are already in native inches (e.g. 85x74)
+        const rawWidth = rawVal1 > 150 ? rawVal1 / 25.4 : rawVal1;
+        const rawLength = rawVal2 > 150 ? rawVal2 / 25.4 : rawVal2;
+        const thickness = rawThick > 10 ? rawThick / 25.4 : rawThick;
         const materialName = parts[5].trim();
         const layupRequired = parts[10] ? parseInt(parts[10].trim()) : 0;
         
