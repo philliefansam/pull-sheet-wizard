@@ -48,6 +48,12 @@ async function initApp() {
   await loadSqlWasm();
 }
 
+// Helper to resolve backend server API URL (supports both http://localhost:9994/ and direct file:// protocol access)
+function getServerApiUrl(endpoint) {
+  const origin = (window.location.protocol === 'file:' || !window.location.host) ? 'http://localhost:9994' : '';
+  return `${origin}${endpoint}`;
+}
+
 let isServerConnected = false;
 
 // Check if backend server is responsive with cache-busting and live heartbeat
@@ -59,7 +65,8 @@ async function checkServerConnection(silent = false) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-    const res = await fetch('/api/status?_t=' + Date.now(), { 
+    const targetUrl = getServerApiUrl(`/api/status?_t=${Date.now()}`);
+    const res = await fetch(targetUrl, { 
       cache: 'no-store',
       signal: controller.signal
     });
@@ -101,8 +108,9 @@ async function checkServerConnection(silent = false) {
 async function loadSqlWasm() {
   try {
     if (typeof initSqlJs !== 'undefined') {
+      const serverBase = getServerApiUrl('');
       state.SQL = await initSqlJs({
-        locateFile: file => `/public/${file}`
+        locateFile: file => `${serverBase}/public/${file}`
       });
       console.log('SQL.js initialized successfully.');
     } else {
@@ -429,7 +437,8 @@ async function handleScan() {
     
     // Fetch folders in parallel
     const scanPromises = paths.map(async (p) => {
-      const res = await fetch('/api/scan', {
+      const targetUrl = getServerApiUrl('/api/scan');
+      const res = await fetch(targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: p })

@@ -30,7 +30,7 @@ $listener.Prefixes.Add("http://localhost:9994/")
 
 try {
     $listener.Start()
-    Write-Host "Server running at http://localhost:9998/" -ForegroundColor Green
+    Write-Host "Server running at http://localhost:9994/" -ForegroundColor Green
     Write-Host "Press Ctrl+C to stop the server." -ForegroundColor Yellow
 } catch {
     Write-Host "Failed to start HTTP listener: $_" -ForegroundColor Red
