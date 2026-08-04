@@ -1619,9 +1619,9 @@ function parseCPOUT(content) {
           sheet_count = qty;
         }
       }
-      // In beam saw CPOUT: parts[4] is Length (RAW_MAX_Y), parts[5] is Width (RAW_MAX_X)
-      if (parts[4]) raw_max_y = parseFloat(parts[4]); // Board Length
-      if (parts[5]) raw_max_x = parseFloat(parts[5]); // Board Width
+      // In beam saw CPOUT INV1: parts[4] is Width (e.g. 61.000), parts[5] is Length (e.g. 121.000)
+      if (parts[4]) raw_max_x = parseFloat(parts[4]); // Board Width
+      if (parts[5]) raw_max_y = parseFloat(parts[5]); // Board Length
     }
     
     if (parts[0] === 'ORD1') {
