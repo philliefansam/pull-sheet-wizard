@@ -1637,9 +1637,9 @@ function parsePullSheet(content) {
         const rawVal2 = parseFloat(parts[3]);
         const rawThick = parseFloat(parts[4]);
         
-        // Auto-detect unit: if values > 150 they are in millimeters (e.g. 2440x1220 mm); if <= 150 they are already in native inches (e.g. 85x74)
-        const rawWidth = rawVal1 > 150 ? rawVal1 / 25.4 : rawVal1;
-        const rawLength = rawVal2 > 150 ? rawVal2 / 25.4 : rawVal2;
+        // parts[2] is Board Width, parts[3] is Board Length
+        const boardWidth = rawVal1 > 150 ? rawVal1 / 25.4 : rawVal1;
+        const boardLength = rawVal2 > 150 ? rawVal2 / 25.4 : rawVal2;
         const thickness = rawThick > 10 ? rawThick / 25.4 : rawThick;
         const materialName = parts[5].trim();
         const layupRequired = parts[10] ? parseInt(parts[10].trim()) : 0;
@@ -1677,9 +1677,9 @@ function parsePullSheet(content) {
           layup_required: layupRequired === 1,
           quantity: 1,
           dimensions: {
-            nominal: `${Math.round(rawLength)}x${Math.round(rawWidth)}`,
-            length_in: rawLength,
-            width_in: rawWidth
+            nominal: `${Math.round(boardWidth)}x${Math.round(boardLength)}`,
+            length_in: boardWidth,
+            width_in: boardLength
           },
           stack_composition: {
             face: face,
