@@ -20,32 +20,48 @@ const state = {
 
 const SHOP_CLEARANCE = 2.0;
 
-// Initialize when DOM is loaded
-document.addEventListener('DOMContentLoaded', async () => {
+// Initialize when DOM is loaded or immediately if already parsed
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
   initApp();
-});
+}
 
 // App Entry Point
 async function initApp() {
-  // Set default date
-  const today = new Date();
-  state.metadata.dateProcessed = today.toISOString().split('T')[0];
-  document.getElementById('meta-date-processed').value = state.metadata.dateProcessed;
-  
-  // Set up event listeners
-  setupEventListeners();
+  try {
+    // Set default date
+    const today = new Date();
+    state.metadata.dateProcessed = today.toISOString().split('T')[0];
+    const dateInput = document.getElementById('meta-date-processed');
+    if (dateInput) dateInput.value = state.metadata.dateProcessed;
+    
+    // Set up event listeners
+    setupEventListeners();
 
-  // Restore session cache if present
-  restoreSessionCache();
+    // Restore session cache if present
+    restoreSessionCache();
+  } catch (e) {
+    console.warn('Initialization error in state/DOM setup:', e);
+  }
   
   // Check backend server connection and start live 3s heartbeat polling
-  await checkServerConnection(true);
+  try {
+    await checkServerConnection(true);
+  } catch (e) {
+    console.warn('Initial server check error:', e);
+  }
+
   setInterval(() => {
     checkServerConnection(true);
   }, 3000);
   
   // Load SQLite WASM
-  await loadSqlWasm();
+  try {
+    await loadSqlWasm();
+  } catch (e) {
+    console.warn('SQLite WASM load error:', e);
+  }
 }
 
 // Helper to resolve backend server API URL (supports both http://localhost:9994/ and direct file:// protocol access)
