@@ -1708,8 +1708,8 @@ function parsePullSheet(content) {
           quantity: 1,
           dimensions: {
             nominal: `${Math.round(boardWidth)}x${Math.round(boardLength)}`,
-            length_in: boardWidth,
-            width_in: boardLength
+            width_in: boardWidth,
+            length_in: boardLength
           },
           stack_composition: {
             face: face,
