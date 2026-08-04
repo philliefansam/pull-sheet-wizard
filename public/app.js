@@ -1172,7 +1172,7 @@ function renderCardDimensionsBadge(mat) {
       return `
         <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
           <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
-          <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Net: <strong>${sheet.net_length.toFixed(1)}" x ${sheet.net_width.toFixed(1)}"</strong></span>
+          <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Final: <strong>${(sheet.final_length || sheet.net_length).toFixed(1)}" x ${(sheet.final_width || sheet.net_width).toFixed(1)}"</strong></span>
         </div>
       `;
     }).join('')}
