@@ -876,6 +876,30 @@ function processScannedFiles() {
     });
     const hasPullData = mat.pullSheetData && mat.pullSheetData.length > 0;
     
+    if (hasPullData) {
+      // Primary source of truth for nest dimensions is the CncRun / Pull Sheet manifest (parts[2] = Board Width, parts[3] = Board Length)
+      const sprayBoothItem = mat.pullSheetData.find(item => item.layup_required) || mat.pullSheetData[0];
+      if (sprayBoothItem && sprayBoothItem.dimensions) {
+        const bWidth = sprayBoothItem.dimensions.width_in || 85.0;
+        const bLength = sprayBoothItem.dimensions.length_in || 74.0;
+        
+        mat.final_length = bWidth;
+        mat.final_width = bLength;
+        mat.raw_max_x = bWidth;
+        mat.raw_max_y = bLength;
+        
+        // Synchronize all sheet dimensions to Board Width (bWidth) x Board Length (bLength)
+        mat.sheets.forEach(sheet => {
+          sheet.raw_max_x = bWidth;
+          sheet.raw_max_y = bLength;
+          sheet.final_length = bWidth;
+          sheet.final_width = bLength;
+          sheet.net_length = bWidth;
+          sheet.net_width = bLength;
+        });
+      }
+    }
+
     if (mat.sheets.length === 0 && !hasCncFiles && !hasPullData) {
       delete state.materials[key];
     } else if (mat.sheets.length === 0 && (hasCncFiles || hasPullData)) {
@@ -883,12 +907,12 @@ function processScannedFiles() {
         mat.pullSheetData.forEach((item, index) => {
           mat.sheets.push({
             fileName: item.material_name || `Pull Sheet Nest ${index + 1}`,
-            raw_max_x: mat.raw_max_x || item.dimensions.length_in || 96.0,
-            raw_max_y: mat.raw_max_y || item.dimensions.width_in || 48.0,
-            net_length: item.dimensions.length_in || 0,
-            net_width: item.dimensions.width_in || 0,
-            final_length: item.dimensions.length_in || 0,
-            final_width: item.dimensions.width_in || 0
+            raw_max_x: item.dimensions.width_in || 96.0,
+            raw_max_y: item.dimensions.length_in || 48.0,
+            net_length: item.dimensions.width_in || 0,
+            net_width: item.dimensions.length_in || 0,
+            final_length: item.dimensions.width_in || 0,
+            final_width: item.dimensions.length_in || 0
           });
         });
       }
