@@ -1534,20 +1534,16 @@ function parseMPR(content) {
   const net_length = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0;
   const net_width = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0;
   
-  // Align raw_max_x with Board Width (first dimension, e.g. 49", 61") and raw_max_y with Board Length (second dimension, e.g. 97", 109", 121")
-  const boardWidth = (raw_max_x > 0 && raw_max_y > 0) ? Math.min(raw_max_x, raw_max_y) : (raw_max_x || raw_max_y);
-  const boardLength = (raw_max_x > 0 && raw_max_y > 0) ? Math.max(raw_max_x, raw_max_y) : (raw_max_y || raw_max_x);
-
-  const recWidth = calculateFinalDimension(Math.min(net_length, net_width), boardWidth);
-  const recLength = calculateFinalDimension(Math.max(net_length, net_width), boardLength);
+  const recLength = calculateFinalDimension(net_length, raw_max_x);
+  const recWidth = calculateFinalDimension(net_width, raw_max_y);
   
   return {
-    raw_max_x: boardWidth,
-    raw_max_y: boardLength,
-    net_length: Math.min(net_length, net_width),
-    net_width: Math.max(net_length, net_width),
-    recommended_length: recWidth,
-    recommended_width: recLength
+    raw_max_x,
+    raw_max_y,
+    net_length,
+    net_width,
+    recommended_length: recLength,
+    recommended_width: recWidth
   };
 }
 
@@ -1588,20 +1584,16 @@ function parseHOP(content) {
   const net_length = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0;
   const net_width = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0;
   
-  // Align raw_max_x with Board Width (first/primary dimension) and raw_max_y with Board Length (second dimension)
-  const boardWidth = (raw_max_x > 0 && raw_max_y > 0) ? Math.max(raw_max_x, raw_max_y) : (raw_max_x || raw_max_y);
-  const boardLength = (raw_max_x > 0 && raw_max_y > 0) ? Math.min(raw_max_x, raw_max_y) : (raw_max_y || raw_max_x);
-  
-  const recWidth = calculateFinalDimension(Math.max(net_length, net_width), boardWidth);
-  const recLength = calculateFinalDimension(Math.min(net_length, net_width), boardLength);
+  const recLength = calculateFinalDimension(net_length, raw_max_x);
+  const recWidth = calculateFinalDimension(net_width, raw_max_y);
   
   return {
-    raw_max_x: boardWidth,
-    raw_max_y: boardLength,
-    net_length: Math.max(net_length, net_width),
-    net_width: Math.min(net_length, net_width),
-    recommended_length: recWidth,
-    recommended_width: recLength
+    raw_max_x,
+    raw_max_y,
+    net_length,
+    net_width,
+    recommended_length: recLength,
+    recommended_width: recWidth
   };
 }
 
@@ -1643,20 +1635,16 @@ function parseCPOUT(content) {
   // Cumulate width stacks for beam saw
   const net_width = ordWidths.reduce((a, b) => a + b, 0);
   
-  // Align raw_max_x with Board Width (first dimension, e.g. 49", 61") and raw_max_y with Board Length (second dimension, e.g. 97", 109", 121")
-  const boardWidth = (raw_max_x > 0 && raw_max_y > 0) ? Math.min(raw_max_x, raw_max_y) : (raw_max_x || raw_max_y);
-  const boardLength = (raw_max_x > 0 && raw_max_y > 0) ? Math.max(raw_max_x, raw_max_y) : (raw_max_y || raw_max_x);
-
-  const recWidth = calculateFinalDimension(Math.min(net_length, net_width), boardWidth);
-  const recLength = calculateFinalDimension(Math.max(net_length, net_width), boardLength);
+  const recLength = calculateFinalDimension(net_length, raw_max_x);
+  const recWidth = calculateFinalDimension(net_width, raw_max_y);
   
   return {
-    raw_max_x: boardWidth,
-    raw_max_y: boardLength,
-    net_length: Math.min(net_length, net_width),
-    net_width: Math.max(net_length, net_width),
-    recommended_length: recWidth,
-    recommended_width: recLength,
+    raw_max_x,
+    raw_max_y,
+    net_length,
+    net_width,
+    recommended_length: recLength,
+    recommended_width: recWidth,
     sheet_count
   };
 }
@@ -1952,26 +1940,29 @@ function renderPullSheetReport() {
     return `${val}"`;
   }
 
-  // Format dimension bounds string (exact footage: (5x10), (5x9), (4x8); non-exact footage: explicit inches preserving orientation (e.g. 85"x74"))
-  function formatBoundsStr(fLen, fWid) {
-    const maxDim = Math.max(fLen || 0, fWid || 0);
-    const minDim = Math.min(fLen || 0, fWid || 0);
+  // Format dimension bounds string (exact footage: (5x10), (5x9), (4x8); non-exact footage: explicit inches preserving parsed Width x Length orientation (e.g. 85"x74"))
+  function formatBoundsStr(fWid, fLen) {
+    const w = fWid || 0;
+    const l = fLen || 0;
+    const maxDim = Math.max(w, l);
+    const minDim = Math.min(w, l);
     
     // Check if the calculated offcut size in material_summary is an exact full stock sheet (5x10, 5x9, or 4x8)
     const isFull5x10 = (Math.abs(maxDim - 121) <= 1.5 || Math.abs(maxDim - 120) <= 1.5) && 
                        (Math.abs(minDim - 61) <= 1.5 || Math.abs(minDim - 60) <= 1.5);
     const isFull5x9  = (Math.abs(maxDim - 109) <= 1.5 || Math.abs(maxDim - 108) <= 1.5) && 
                        (Math.abs(minDim - 61) <= 1.5 || Math.abs(minDim - 60) <= 1.5);
-    const isFull4x8  = (Math.abs(maxDim - 96) <= 1.5) && (Math.abs(minDim - 48) <= 1.5);
+    const isFull4x8  = (Math.abs(maxDim - 96) <= 1.5 || Math.abs(maxDim - 97) <= 1.5) && 
+                       (Math.abs(minDim - 48) <= 1.5 || Math.abs(minDim - 49) <= 1.5);
 
     if (isFull5x10) return '(5x10)';
     if (isFull5x9)  return '(5x9)';
     if (isFull4x8)  return '(4x8)';
     
-    // Custom / non-stock offcut sizes: preserve explicit dimension order (e.g. 85"x74" vs 74"x85")
-    const renderLen = fLen ? Math.round(fLen) : 96;
-    const renderWid = fWid ? Math.round(fWid) : 48;
-    return `(${renderLen}"x${renderWid}")`;
+    // Custom / non-stock offcut sizes: ALWAYS display Board Width x Board Length in exact parsed order as passed!
+    const renderWid = w ? Math.round(w) : 48;
+    const renderLen = l ? Math.round(l) : 96;
+    return `(${renderWid}"x${renderLen}")`;
   }
 
   let html = `
