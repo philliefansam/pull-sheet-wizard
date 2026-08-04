@@ -885,11 +885,15 @@ function processScannedFiles() {
         
         mat.raw_max_x = bWidth;
         mat.raw_max_y = bLength;
+        mat.final_length = bWidth;
+        mat.final_width = bLength;
         
         // Ensure each sheet references raw stock bounds if unpopulated
         mat.sheets.forEach(sheet => {
           if (!sheet.raw_max_x || sheet.raw_max_x === 0) sheet.raw_max_x = bWidth;
           if (!sheet.raw_max_y || sheet.raw_max_y === 0) sheet.raw_max_y = bLength;
+          if (!sheet.final_length || sheet.final_length === 0) sheet.final_length = bWidth;
+          if (!sheet.final_width || sheet.final_width === 0) sheet.final_width = bLength;
         });
       }
     }
@@ -1530,16 +1534,20 @@ function parseMPR(content) {
   const net_length = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0;
   const net_width = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0;
   
-  const recLength = calculateFinalDimension(net_length, raw_max_x);
-  const recWidth = calculateFinalDimension(net_width, raw_max_y);
+  // Align raw_max_x with Board Width (first dimension, e.g. 49", 61") and raw_max_y with Board Length (second dimension, e.g. 97", 109", 121")
+  const boardWidth = (raw_max_x > 0 && raw_max_y > 0) ? Math.min(raw_max_x, raw_max_y) : (raw_max_x || raw_max_y);
+  const boardLength = (raw_max_x > 0 && raw_max_y > 0) ? Math.max(raw_max_x, raw_max_y) : (raw_max_y || raw_max_x);
+
+  const recWidth = calculateFinalDimension(Math.min(net_length, net_width), boardWidth);
+  const recLength = calculateFinalDimension(Math.max(net_length, net_width), boardLength);
   
   return {
-    raw_max_x,
-    raw_max_y,
-    net_length,
-    net_width,
-    recommended_length: recLength,
-    recommended_width: recWidth
+    raw_max_x: boardWidth,
+    raw_max_y: boardLength,
+    net_length: Math.min(net_length, net_width),
+    net_width: Math.max(net_length, net_width),
+    recommended_length: recWidth,
+    recommended_width: recLength
   };
 }
 
@@ -1580,16 +1588,20 @@ function parseHOP(content) {
   const net_length = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0;
   const net_width = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0;
   
-  const recLength = calculateFinalDimension(net_length, raw_max_x);
-  const recWidth = calculateFinalDimension(net_width, raw_max_y);
+  // Align raw_max_x with Board Width (first/primary dimension) and raw_max_y with Board Length (second dimension)
+  const boardWidth = (raw_max_x > 0 && raw_max_y > 0) ? Math.max(raw_max_x, raw_max_y) : (raw_max_x || raw_max_y);
+  const boardLength = (raw_max_x > 0 && raw_max_y > 0) ? Math.min(raw_max_x, raw_max_y) : (raw_max_y || raw_max_x);
+  
+  const recWidth = calculateFinalDimension(Math.max(net_length, net_width), boardWidth);
+  const recLength = calculateFinalDimension(Math.min(net_length, net_width), boardLength);
   
   return {
-    raw_max_x,
-    raw_max_y,
-    net_length,
-    net_width,
-    recommended_length: recLength,
-    recommended_width: recWidth
+    raw_max_x: boardWidth,
+    raw_max_y: boardLength,
+    net_length: Math.max(net_length, net_width),
+    net_width: Math.min(net_length, net_width),
+    recommended_length: recWidth,
+    recommended_width: recLength
   };
 }
 
@@ -1631,16 +1643,20 @@ function parseCPOUT(content) {
   // Cumulate width stacks for beam saw
   const net_width = ordWidths.reduce((a, b) => a + b, 0);
   
-  const recLength = calculateFinalDimension(net_length, raw_max_x);
-  const recWidth = calculateFinalDimension(net_width, raw_max_y);
+  // Align raw_max_x with Board Width (first dimension, e.g. 49", 61") and raw_max_y with Board Length (second dimension, e.g. 97", 109", 121")
+  const boardWidth = (raw_max_x > 0 && raw_max_y > 0) ? Math.min(raw_max_x, raw_max_y) : (raw_max_x || raw_max_y);
+  const boardLength = (raw_max_x > 0 && raw_max_y > 0) ? Math.max(raw_max_x, raw_max_y) : (raw_max_y || raw_max_x);
+
+  const recWidth = calculateFinalDimension(Math.min(net_length, net_width), boardWidth);
+  const recLength = calculateFinalDimension(Math.max(net_length, net_width), boardLength);
   
   return {
-    raw_max_x,
-    raw_max_y,
-    net_length,
-    net_width,
-    recommended_length: recLength,
-    recommended_width: recWidth,
+    raw_max_x: boardWidth,
+    raw_max_y: boardLength,
+    net_length: Math.min(net_length, net_width),
+    net_width: Math.max(net_length, net_width),
+    recommended_length: recWidth,
+    recommended_width: recLength,
     sheet_count
   };
 }
