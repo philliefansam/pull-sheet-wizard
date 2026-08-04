@@ -148,6 +148,18 @@ function setupEventListeners() {
   document.getElementById('btn-generate-demo').addEventListener('click', handleGenerateDemo);
   document.getElementById('btn-export-sqlite').addEventListener('click', handleExportSqlite);
   
+  // Pressing Enter in scan path input field triggers scan button click
+  const pathsContainer = document.getElementById('paths-list-container');
+  if (pathsContainer) {
+    pathsContainer.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target && e.target.classList.contains('pasted-path-field')) {
+        e.preventDefault();
+        const btnScan = document.getElementById('btn-scan');
+        if (btnScan) btnScan.click();
+      }
+    });
+  }
+  
   const btnReset = document.getElementById('btn-reset-project');
   if (btnReset) {
     btnReset.addEventListener('click', handleResetProject);
