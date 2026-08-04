@@ -1179,24 +1179,30 @@ function buildWizard() {
 // Helper to render wizard card dimensions badge
 function renderCardDimensionsBadge(mat) {
   const isWhole = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
+  const renderWidth = (mat.final_length && mat.final_length > 0) ? mat.final_length : 85.0;
+  const renderLength = (mat.final_width && mat.final_width > 0) ? mat.final_width : 74.0;
+
   return `
     <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed var(--border-color); padding-bottom: 8px; margin-bottom: 4px;">
       <span>Sheet Quantity:</span>
       <strong>${mat.sheets.length} sheet${mat.sheets.length > 1 ? 's' : ''}</strong>
     </div>
     ${mat.sheets.map((sheet, idx) => {
+      const sheetWid = (sheet.final_length && sheet.final_length > 0) ? sheet.final_length : renderWidth;
+      const sheetLen = (sheet.final_width && sheet.final_width > 0) ? sheet.final_width : renderLength;
+      
       if (isWhole) {
         return `
           <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
             <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
-            <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Final: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}" (Whole Sheet)</strong></span>
+            <span>Raw: <strong>${sheetWid.toFixed(1)}" x ${sheetLen.toFixed(1)}"</strong> | Final: <strong>${sheetWid.toFixed(1)}" x ${sheetLen.toFixed(1)}" (Whole Sheet)</strong></span>
           </div>
         `;
       }
       return `
         <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
           <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
-          <span>Raw: <strong>${sheet.raw_max_x.toFixed(1)}" x ${sheet.raw_max_y.toFixed(1)}"</strong> | Final: <strong>${(sheet.final_length || sheet.net_length).toFixed(1)}" x ${(sheet.final_width || sheet.net_width).toFixed(1)}"</strong></span>
+          <span>Raw: <strong>${sheetWid.toFixed(1)}" x ${sheetLen.toFixed(1)}"</strong> | Final: <strong>${sheetWid.toFixed(1)}" x ${sheetLen.toFixed(1)}"</strong></span>
         </div>
       `;
     }).join('')}
