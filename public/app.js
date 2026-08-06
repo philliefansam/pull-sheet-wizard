@@ -815,7 +815,8 @@ function processScannedFiles() {
         net_length: parsed.net_length,
         net_width: parsed.net_width,
         final_length: parsed.recommended_length,
-        final_width: parsed.recommended_width
+        final_width: parsed.recommended_width,
+        hasTrim: parsed.hasTrim
       });
     } else if (ext === 'hop') {
       const parsed = parseHOP(file.content);
@@ -832,7 +833,8 @@ function processScannedFiles() {
         net_length: parsed.net_length,
         net_width: parsed.net_width,
         final_length: parsed.recommended_length,
-        final_width: parsed.recommended_width
+        final_width: parsed.recommended_width,
+        hasTrim: parsed.hasTrim
       });
     } else if (ext === 'cpout' || ext === 'cpl' || fileName.toLowerCase().includes('cpout')) {
       const parsed = parseCPOUT(file.content);
@@ -851,7 +853,8 @@ function processScannedFiles() {
           net_length: parsed.net_length,
           net_width: parsed.net_width,
           final_length: parsed.recommended_length,
-          final_width: parsed.recommended_width
+          final_width: parsed.recommended_width,
+          hasTrim: parsed.hasTrim
         });
       }
     } else if (ext === 'txt' || ext === 'pull') {
@@ -1206,17 +1209,21 @@ function renderCardDimensionsBadge(mat) {
       const finX = (sheet.final_length && sheet.final_length < rawX) ? sheet.final_length : (calcFinX > 0 ? calcFinX : rawX);
       const finY = (sheet.final_width && sheet.final_width < rawY) ? sheet.final_width : (calcFinY > 0 ? calcFinY : rawY);
 
+      const trimStatusHtml = (sheet.hasTrim !== false)
+        ? `<span style="margin-left: 8px; font-size: 11px; opacity: 0.9;">Trim? <span style="color: #22c55e; font-weight: bold; font-size: 13px;">✓</span></span>`
+        : `<span style="margin-left: 8px; font-size: 11px; opacity: 0.9;">Trim? <span style="color: #ef4444; font-weight: bold; font-size: 13px;">✕</span></span>`;
+
       if (isWhole) {
         return `
-          <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
-            <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
+          <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); align-items: center;">
+            <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}): ${trimStatusHtml}</span>
             <span>Raw: <strong>${rawX.toFixed(1)}" x ${rawY.toFixed(1)}"</strong> | Final: <strong>${rawX.toFixed(1)}" x ${rawY.toFixed(1)}" (Whole Sheet)</strong></span>
           </div>
         `;
       }
       return `
-        <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
-          <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}):</span>
+        <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); align-items: center;">
+          <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}): ${trimStatusHtml}</span>
           <span>Raw: <strong>${rawX.toFixed(1)}" x ${rawY.toFixed(1)}"</strong> | Final: <strong>${finX.toFixed(1)}" x ${finY.toFixed(1)}"</strong></span>
         </div>
       `;
@@ -1546,8 +1553,18 @@ function parseMPR(content) {
   const net_x = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0; // Along Length
   const net_y = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0; // Along Width
   
+  const minX = xCoords.length > 0 ? Math.min(...xCoords) : 0;
+  const maxX = xCoords.length > 0 ? Math.max(...xCoords) : 0;
+  const minY = yCoords.length > 0 ? Math.min(...yCoords) : 0;
+  const maxY = yCoords.length > 0 ? Math.max(...yCoords) : 0;
+  
   const recWidth = calculateFinalDimension(net_y, raw_max_x); // Final cropped Width
   const recLength = calculateFinalDimension(net_x, raw_max_y); // Final cropped Length
+  
+  // Ensure space from cut parts to all 4 edges of raw board is > 0"
+  const hasTrim = xCoords.length > 0 && yCoords.length > 0 &&
+                  minX > 0.01 && minY > 0.01 &&
+                  (raw_max_y - maxX) > 0.01 && (raw_max_x - maxY) > 0.01;
   
   return {
     raw_max_x, // Board Width (Dimension 1)
@@ -1555,7 +1572,8 @@ function parseMPR(content) {
     net_length: net_y, // UI maps this to calcFinX (Width)
     net_width: net_x,  // UI maps this to calcFinY (Length)
     recommended_length: recWidth, // UI maps this to finX (Width)
-    recommended_width: recLength  // UI maps this to finY (Length)
+    recommended_width: recLength, // UI maps this to finY (Length)
+    hasTrim
   };
 }
 
@@ -1596,8 +1614,18 @@ function parseHOP(content) {
   const net_x = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0; // Along Length
   const net_y = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0; // Along Width
   
+  const minX = xCoords.length > 0 ? Math.min(...xCoords) : 0;
+  const maxX = xCoords.length > 0 ? Math.max(...xCoords) : 0;
+  const minY = yCoords.length > 0 ? Math.min(...yCoords) : 0;
+  const maxY = yCoords.length > 0 ? Math.max(...yCoords) : 0;
+  
   const recWidth = calculateFinalDimension(net_y, raw_max_x); // Final cropped Width
   const recLength = calculateFinalDimension(net_x, raw_max_y); // Final cropped Length
+  
+  // Ensure space from cut parts to all 4 edges of raw board is > 0"
+  const hasTrim = xCoords.length > 0 && yCoords.length > 0 &&
+                  minX > 0.01 && minY > 0.01 &&
+                  (raw_max_y - maxX) > 0.01 && (raw_max_x - maxY) > 0.01;
   
   return {
     raw_max_x, // Board Width (Dimension 1)
@@ -1605,7 +1633,8 @@ function parseHOP(content) {
     net_length: net_y, // UI maps this to calcFinX (Width)
     net_width: net_x,  // UI maps this to calcFinY (Length)
     recommended_length: recWidth, // UI maps this to finX (Width)
-    recommended_width: recLength  // UI maps this to finY (Length)
+    recommended_width: recLength,  // UI maps this to finY (Length)
+    hasTrim
   };
 }
 
@@ -1614,6 +1643,7 @@ function parseCPOUT(content) {
   let raw_max_y = 0; // Length
   let raw_max_x = 0; // Width
   let sheet_count = 1;
+  let invTrim1 = 0, invTrim2 = 0, invTrim3 = 0, invTrim4 = 0;
   
   const ordLengths = []; // Length axis
   const ordWidths = []; // Width axis
@@ -1634,6 +1664,10 @@ function parseCPOUT(content) {
       // In beam saw CPOUT INV1: parts[4] is Width (e.g. 61.000), parts[5] is Length (e.g. 121.000)
       if (parts[4]) raw_max_x = parseFloat(parts[4]); // Board Width
       if (parts[5]) raw_max_y = parseFloat(parts[5]); // Board Length
+      if (parts[6]) invTrim1 = parseFloat(parts[6]);
+      if (parts[7]) invTrim2 = parseFloat(parts[7]);
+      if (parts[8]) invTrim3 = parseFloat(parts[8]);
+      if (parts[9]) invTrim4 = parseFloat(parts[9]);
     }
     
     if (parts[0] === 'ORD1') {
@@ -1650,6 +1684,9 @@ function parseCPOUT(content) {
   const recWidth = calculateFinalDimension(net_w, raw_max_x); // Final cropped Width
   const recLength = calculateFinalDimension(net_l, raw_max_y); // Final cropped Length
   
+  const hasTrim = (invTrim1 > 0.001 || invTrim2 > 0.001 || invTrim3 > 0.001 || invTrim4 > 0.001) ||
+                  (net_w > 0 && net_l > 0 && net_w < raw_max_x - 0.01 && net_l < raw_max_y - 0.01);
+  
   return {
     raw_max_x, // Board Width (Dimension 1)
     raw_max_y, // Board Length (Dimension 2)
@@ -1657,7 +1694,8 @@ function parseCPOUT(content) {
     net_width: net_l,  // UI maps this to calcFinY (Length)
     recommended_length: recWidth, // UI maps this to finX (Width)
     recommended_width: recLength, // UI maps this to finY (Length)
-    sheet_count
+    sheet_count,
+    hasTrim
   };
 }
 
