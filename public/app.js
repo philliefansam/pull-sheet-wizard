@@ -1550,19 +1550,23 @@ function parseMPR(content) {
     if (matchY) yCoords.push(parseFloat(matchY[1]) / 25.4);
   }
   
-  const net_x = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0; // Along Length
-  const net_y = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0; // Along Width
+  // Filter out off-board lead-in / lead-out / trimming pass coordinates (< 0 or > raw_max)
+  const validX = xCoords.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+  const validY = yCoords.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
   
-  const minX = xCoords.length > 0 ? Math.min(...xCoords) : 0;
-  const maxX = xCoords.length > 0 ? Math.max(...xCoords) : 0;
-  const minY = yCoords.length > 0 ? Math.min(...yCoords) : 0;
-  const maxY = yCoords.length > 0 ? Math.max(...yCoords) : 0;
+  const net_x = validX.length > 0 ? Math.max(...validX) - Math.min(...validX) : 0; // Along Length
+  const net_y = validY.length > 0 ? Math.max(...validY) - Math.min(...validY) : 0; // Along Width
+  
+  const minX = validX.length > 0 ? Math.min(...validX) : 0;
+  const maxX = validX.length > 0 ? Math.max(...validX) : 0;
+  const minY = validY.length > 0 ? Math.min(...validY) : 0;
+  const maxY = validY.length > 0 ? Math.max(...validY) : 0;
   
   const recWidth = calculateFinalDimension(net_y, raw_max_x); // Final cropped Width
   const recLength = calculateFinalDimension(net_x, raw_max_y); // Final cropped Length
   
   // Ensure space from cut parts to all 4 edges of raw board is > 0"
-  const hasTrim = xCoords.length > 0 && yCoords.length > 0 &&
+  const hasTrim = validX.length > 0 && validY.length > 0 &&
                   minX > 0.01 && minY > 0.01 &&
                   (raw_max_y - maxX) > 0.01 && (raw_max_x - maxY) > 0.01;
   
@@ -1611,19 +1615,23 @@ function parseHOP(content) {
     }
   }
   
-  const net_x = xCoords.length > 0 ? Math.max(...xCoords) - Math.min(...xCoords) : 0; // Along Length
-  const net_y = yCoords.length > 0 ? Math.max(...yCoords) - Math.min(...yCoords) : 0; // Along Width
+  // Filter out off-board lead-in / lead-out / trimming pass coordinates (< 0 or > raw_max)
+  const validX = xCoords.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+  const validY = yCoords.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
   
-  const minX = xCoords.length > 0 ? Math.min(...xCoords) : 0;
-  const maxX = xCoords.length > 0 ? Math.max(...xCoords) : 0;
-  const minY = yCoords.length > 0 ? Math.min(...yCoords) : 0;
-  const maxY = yCoords.length > 0 ? Math.max(...yCoords) : 0;
+  const net_x = validX.length > 0 ? Math.max(...validX) - Math.min(...validX) : 0; // Along Length
+  const net_y = validY.length > 0 ? Math.max(...validY) - Math.min(...validY) : 0; // Along Width
+  
+  const minX = validX.length > 0 ? Math.min(...validX) : 0;
+  const maxX = validX.length > 0 ? Math.max(...validX) : 0;
+  const minY = validY.length > 0 ? Math.min(...validY) : 0;
+  const maxY = validY.length > 0 ? Math.max(...validY) : 0;
   
   const recWidth = calculateFinalDimension(net_y, raw_max_x); // Final cropped Width
   const recLength = calculateFinalDimension(net_x, raw_max_y); // Final cropped Length
   
   // Ensure space from cut parts to all 4 edges of raw board is > 0"
-  const hasTrim = xCoords.length > 0 && yCoords.length > 0 &&
+  const hasTrim = validX.length > 0 && validY.length > 0 &&
                   minX > 0.01 && minY > 0.01 &&
                   (raw_max_y - maxX) > 0.01 && (raw_max_x - maxY) > 0.01;
   
