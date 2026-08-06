@@ -1520,6 +1520,8 @@ function calculateFinalDimension(netDim, rawMaxDim) {
 function parseMPR(content) {
   let raw_max_x = 0;
   let raw_max_y = 0;
+  const xaCoords = [];
+  const yaCoords = [];
   const xCoords = [];
   const yCoords = [];
   
@@ -1543,16 +1545,26 @@ function parseMPR(content) {
       if (matchW) raw_max_x = parseFloat(matchW[1]) / 25.4; // Board Width
     }
     
-    // Parse coordinates (supports standard X=, Y=, XA=, YA= on standalone lines)
-    const matchX = line.match(/^\s*(?:XA|X)\s*=\s*"*([\d.-]+)"*/i);
-    const matchY = line.match(/^\s*(?:YA|Y)\s*=\s*"*([\d.-]+)"*/i);
+    // Parse absolute operation placement coordinates XA=, YA=
+    const matchXA = line.match(/^\s*XA\s*=\s*"*([\d.-]+)"*/i);
+    const matchYA = line.match(/^\s*YA\s*=\s*"*([\d.-]+)"*/i);
+    if (matchXA) xaCoords.push(parseFloat(matchXA[1]) / 25.4);
+    if (matchYA) yaCoords.push(parseFloat(matchYA[1]) / 25.4);
+
+    // Parse general contour vertex coordinates X=, Y=
+    const matchX = line.match(/^\s*X\s*=\s*"*([\d.-]+)"*/i);
+    const matchY = line.match(/^\s*Y\s*=\s*"*([\d.-]+)"*/i);
     if (matchX) xCoords.push(parseFloat(matchX[1]) / 25.4);
     if (matchY) yCoords.push(parseFloat(matchY[1]) / 25.4);
   }
   
+  // Prioritize absolute sheet operation placement coordinates (XA/YA) over local contour polyline relative points
+  const targetX = xaCoords.length > 0 ? xaCoords : xCoords;
+  const targetY = yaCoords.length > 0 ? yaCoords : yCoords;
+
   // Filter out off-board lead-in / lead-out / trimming pass coordinates (< 0 or > raw_max)
-  const validX = xCoords.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
-  const validY = yCoords.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
+  const validX = targetX.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+  const validY = targetY.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
   
   const net_x = validX.length > 0 ? Math.max(...validX) - Math.min(...validX) : 0; // Along Length
   const net_y = validY.length > 0 ? Math.max(...validY) - Math.min(...validY) : 0; // Along Width
