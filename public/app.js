@@ -2530,36 +2530,13 @@ async function handleSaveJob() {
   showToast('Server Disconnected', 'Backend server is offline. Cannot save directly to folder.', 'error');
 }
 
-// Handle Import Job button click: attempts direct folder load from path field, or opens file picker
-async function handleImportJobClick() {
-  const pathFields = Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value.trim()).filter(Boolean);
-  const targetPaths = pathFields.length > 0 ? pathFields : (state.pastedPath ? [state.pastedPath.trim()] : []);
-
-  // If a target folder is entered and server is online, attempt direct folder load first
-  if (isServerConnected && targetPaths.length > 0) {
-    try {
-      const res = await fetch('/api/load-job', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetPath: targetPaths[0] })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.content) {
-          const jobData = JSON.parse(data.content);
-          applyImportedJobData(jobData, data.fileName || data.filePath);
-          return;
-        }
-      }
-    } catch (e) {
-      console.warn('Direct load-job failed, falling back to file picker:', e);
-    }
-  }
-
-  // Fallback to file picker dialog
+// Handle Import Job button click: opens file picker dialog for .json job files
+function handleImportJobClick() {
   const fileImportInput = document.getElementById('file-import-job');
-  if (fileImportInput) fileImportInput.click();
+  if (fileImportInput) {
+    fileImportInput.value = ''; // Reset input to allow re-selecting same file
+    fileImportInput.click();
+  }
 }
 
 // Handle Import Job file selection
