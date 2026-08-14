@@ -249,11 +249,11 @@ while ($listener.IsListening) {
             Write-Host "[DEBUG] Handling save-job request..." -ForegroundColor Gray
             $body = Get-RequestBody $request
             $inputData = ConvertFrom-Json $body
-            $targetPath = $inputData.targetPath
+            $targetPath = if ($inputData.targetPath) { $inputData.targetPath.ToString().Trim().Trim('"').Trim("'") } else { "" }
             $jobJson = $inputData.jobJson
             $fileName = if ($inputData.fileName) { $inputData.fileName } else { "pull_sheet_job.json" }
             
-            if (-not (Test-Path $targetPath)) {
+            if ([string]::IsNullOrWhiteSpace($targetPath) -or (-not (Test-Path $targetPath))) {
                 Send-Json $context 400 @{ message = "Target directory does not exist: $targetPath" }
                 continue
             }
@@ -272,9 +272,9 @@ while ($listener.IsListening) {
             Write-Host "[DEBUG] Handling load-job request..." -ForegroundColor Gray
             $body = Get-RequestBody $request
             $inputData = ConvertFrom-Json $body
-            $targetPath = $inputData.targetPath
+            $targetPath = if ($inputData.targetPath) { $inputData.targetPath.ToString().Trim().Trim('"').Trim("'") } else { "" }
             
-            if (-not (Test-Path $targetPath)) {
+            if ([string]::IsNullOrWhiteSpace($targetPath) -or (-not (Test-Path $targetPath))) {
                 Send-Json $context 400 @{ message = "Target directory does not exist: $targetPath" }
                 continue
             }

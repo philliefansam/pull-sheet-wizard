@@ -2425,9 +2425,21 @@ async function handleSaveJob() {
     return;
   }
 
-  // Determine target paths from input fields
-  const pathFields = Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value.trim()).filter(Boolean);
-  const targetPaths = pathFields.length > 0 ? pathFields : (state.pastedPath ? [state.pastedPath.trim()] : []);
+  // Determine target paths from input fields (supporting multi-row and delimited paths)
+  const pathFields = [];
+  document.querySelectorAll('.pasted-path-field').forEach(el => {
+    const val = (el.value || '').trim().replace(/^["']|["']$/g, '');
+    if (val) {
+      val.split(/[;,]/).map(p => p.trim().replace(/^["']|["']$/g, '')).filter(Boolean).forEach(p => {
+        if (!pathFields.includes(p)) pathFields.push(p);
+      });
+    }
+  });
+
+  let targetPaths = pathFields.length > 0 ? pathFields : (state.pastedPath ? [state.pastedPath.trim().replace(/^["']|["']$/g, '')] : []);
+  if (targetPaths.length === 0 && state.files && state.files.length > 0 && state.files[0].scannedPath) {
+    targetPaths.push(state.files[0].scannedPath.trim().replace(/^["']|["']$/g, ''));
+  }
 
   if (targetPaths.length === 0) {
     showToast('Directory Required', 'Please enter or scan a target project folder path to save the job file.', 'warning');
