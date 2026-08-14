@@ -2048,14 +2048,37 @@ function renderPullSheetReport() {
     return cleaned || name;
   }
 
-  // Format thickness string helper (e.g. 0.75 -> 3/4", 1.125 -> 1-1/8", 0.5 -> 1/2")
+  // Format thickness string helper (e.g. 0.25 -> 1/4", 0.75 -> 3/4", 1.125 -> 1-1/8", 0.5 -> 1/2")
   function formatThicknessStr(val) {
-    if (Math.abs(val - 1.125) < 0.02) return '1-1/8"';
-    if (Math.abs(val - 0.75) < 0.02) return '3/4"';
-    if (Math.abs(val - 0.5) < 0.02) return '1/2"';
-    if (Math.abs(val - 0.625) < 0.02) return '5/8"';
-    if (Math.abs(val - 0.9375) < 0.02) return '15/16"';
-    return `${val}"`;
+    if (!val || isNaN(val) || val <= 0) return '0"';
+    
+    let whole = Math.floor(val);
+    let frac = val - whole;
+    
+    // Check nearest 16th
+    let sixteenths = Math.round(frac * 16);
+    if (sixteenths === 16) {
+      whole += 1;
+      sixteenths = 0;
+    }
+    
+    if (sixteenths === 0) {
+      return `${whole}"`;
+    }
+    
+    // Reduce fraction
+    let num = sixteenths;
+    let den = 16;
+    while (num % 2 === 0 && den % 2 === 0) {
+      num /= 2;
+      den /= 2;
+    }
+    
+    const fracStr = `${num}/${den}`;
+    if (whole > 0) {
+      return `${whole}-${fracStr}"`;
+    }
+    return `${fracStr}"`;
   }
 
   // Format dimension bounds string (exact footage: (5x10), (5x9), (4x8); non-exact footage: explicit inches preserving parsed Width x Length orientation (e.g. 85"x74"))
