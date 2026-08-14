@@ -165,6 +165,20 @@ function setupEventListeners() {
     btnReset.addEventListener('click', handleResetProject);
   }
   
+  const btnSaveJob = document.getElementById('btn-save-job');
+  if (btnSaveJob) {
+    btnSaveJob.addEventListener('click', handleSaveJob);
+  }
+
+  const btnImportJob = document.getElementById('btn-import-job');
+  const fileImportInput = document.getElementById('file-import-job');
+  if (btnImportJob && fileImportInput) {
+    btnImportJob.addEventListener('click', () => {
+      fileImportInput.click();
+    });
+    fileImportInput.addEventListener('change', handleImportJobFile);
+  }
+  
   const btnPrint = document.getElementById('btn-print-pull-sheet');
   if (btnPrint) {
     btnPrint.addEventListener('click', handlePrintPullSheet);
@@ -2387,3 +2401,250 @@ function restoreSessionCache() {
     return false;
   }
 }
+
+// Download helper for JSON data
+function downloadJsonFile(fileName, dataObj) {
+  const jsonStr = typeof dataObj === 'string' ? dataObj : JSON.stringify(dataObj, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Save / Export job state with all user input and modifications to the scanned project folder
+async function handleSaveJob() {
+  const hasData = (state.materials && Object.keys(state.materials).length > 0) || 
+                  (state.files && state.files.length > 0) || 
+                  (state.metadata && (state.metadata.jobNumber || state.metadata.projectName));
+
+  if (!hasData) {
+    showToast('No Data', 'No active job or materials to save. Scan a directory or enter project details first.', 'warning');
+    return;
+  }
+
+  // Determine target paths from input fields
+  const pathFields = Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value.trim()).filter(Boolean);
+  const targetPaths = pathFields.length > 0 ? pathFields : (state.pastedPath ? [state.pastedPath] : []);
+
+  // Build full job payload preserving all user modifications
+  const jobPayload = {
+    version: '1.0',
+    appName: 'Pull Sheet Wizard',
+    savedAt: new Date().toISOString(),
+    savedBy: state.metadata.operatorName || '',
+    pastedPath: state.pastedPath || (targetPaths[0] || ''),
+    pastedPathsList: targetPaths,
+    metadata: Object.assign({}, state.metadata),
+    settings: Object.assign({}, state.settings),
+    materials: JSON.parse(JSON.stringify(state.materials)),
+    files: (state.files || []).map(f => ({
+      name: f.name,
+      relativePath: f.relativePath,
+      scannedPath: f.scannedPath,
+      content: f.content,
+      isReintro: f.isReintro || false
+    }))
+  };
+
+  const cleanJob = (state.metadata.jobNumber || '').replace(/[/\\?%*:|"<>]/g, '-').trim();
+  const cleanProject = (state.metadata.projectName || '').replace(/[/\\?%*:|"<>]/g, '-').trim();
+  let defaultFileName = 'pull_sheet_job.json';
+  if (cleanJob && cleanProject) {
+    defaultFileName = `${cleanJob}_${cleanProject}_job.json`;
+  } else if (cleanJob) {
+    defaultFileName = `${cleanJob}_job.json`;
+  } else if (cleanProject) {
+    defaultFileName = `${cleanProject}_job.json`;
+  }
+
+  let savedToServer = false;
+  let serverSavedPath = '';
+
+  // 1. If backend server is connected and target path is available, save directly to project folder
+  if (isServerConnected && targetPaths.length > 0) {
+    try {
+      const res = await fetch('/api/save-job', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetPath: targetPaths[0],
+          jobJson: JSON.stringify(jobPayload, null, 2),
+          fileName: defaultFileName
+        })
+      });
+
+      if (res.ok) {
+        const resData = await res.json();
+        savedToServer = true;
+        serverSavedPath = resData.savedPath || targetPaths[0];
+      }
+    } catch (e) {
+      console.warn('Backend /api/save-job request failed:', e);
+    }
+  }
+
+  // 2. If browser File System Access API directory handle is active, save locally as well
+  let savedToHandle = false;
+  if (state.directoryHandle && state.directoryHandle.getFileHandle) {
+    try {
+      const fileHandle = await state.directoryHandle.getFileHandle(defaultFileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(JSON.stringify(jobPayload, null, 2));
+      await writable.close();
+      savedToHandle = true;
+    } catch (err) {
+      console.warn('Could not write to native directory handle:', err);
+    }
+  }
+
+  // 3. Show feedback or fallback download
+  if (savedToServer) {
+    showToast('Job Saved', `Successfully exported job configuration to: ${serverSavedPath}`, 'success');
+  } else if (savedToHandle) {
+    showToast('Job Saved', `Saved "${defaultFileName}" to project directory.`, 'success');
+  } else {
+    // If offline or no server path matched, trigger direct JSON file download
+    downloadJsonFile(defaultFileName, jobPayload);
+    showToast('Job Export Downloaded', `Exported job state as "${defaultFileName}".`, 'success');
+  }
+
+  saveSessionCache();
+}
+
+// Handle Import Job file selection
+function handleImportJobFile(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const content = e.target.result;
+      const jobData = JSON.parse(content);
+      applyImportedJobData(jobData, file.name);
+    } catch (err) {
+      console.error('Failed to parse imported job file:', err);
+      showToast('Import Failed', 'The selected file is not a valid JSON job file.', 'error');
+    }
+  };
+  reader.onerror = () => {
+    showToast('Import Error', 'Could not read selected file from disk.', 'error');
+  };
+  reader.readAsText(file);
+
+  // Reset file input so user can pick the same file again if desired
+  event.target.value = '';
+}
+
+// Apply imported job data and restore complete UI state
+function applyImportedJobData(jobData, fileName = '') {
+  if (!jobData || typeof jobData !== 'object') {
+    showToast('Import Failed', 'Invalid job file structure.', 'error');
+    return;
+  }
+
+  // 1. Restore metadata
+  if (jobData.metadata) {
+    state.metadata = Object.assign(state.metadata, jobData.metadata);
+    if (document.getElementById('meta-job-number')) document.getElementById('meta-job-number').value = state.metadata.jobNumber || '';
+    if (document.getElementById('meta-client')) document.getElementById('meta-client').value = state.metadata.client || '';
+    if (document.getElementById('meta-project-name')) document.getElementById('meta-project-name').value = state.metadata.projectName || '';
+    if (document.getElementById('meta-operator-name')) document.getElementById('meta-operator-name').value = state.metadata.operatorName || '';
+    if (document.getElementById('meta-date-processed')) document.getElementById('meta-date-processed').value = state.metadata.dateProcessed || '';
+  }
+
+  // 2. Restore settings
+  if (jobData.settings) {
+    state.settings = Object.assign(state.settings, jobData.settings);
+    if (document.getElementById('settings-overcut')) document.getElementById('settings-overcut').value = state.settings.overcutOverage;
+    if (document.getElementById('settings-offcut')) document.getElementById('settings-offcut').value = state.settings.minOffcutDim;
+  }
+
+  // 3. Restore scan path fields
+  const pathsList = (jobData.pastedPathsList && Array.isArray(jobData.pastedPathsList) && jobData.pastedPathsList.length > 0)
+    ? jobData.pastedPathsList
+    : (jobData.pastedPath ? [jobData.pastedPath] : []);
+
+  if (pathsList.length > 0) {
+    state.pastedPath = pathsList[0];
+    const container = document.getElementById('paths-list-container');
+    if (container) {
+      container.innerHTML = '';
+      pathsList.forEach((pathVal, idx) => {
+        const row = document.createElement('div');
+        row.className = 'path-input-row';
+        row.style.display = 'flex';
+        row.style.gap = '8px';
+        row.style.alignItems = 'center';
+        row.innerHTML = `
+          <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="${pathVal}">
+          ${idx === 0 ? `
+            <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          ` : `
+            <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          `}
+        `;
+        container.appendChild(row);
+        if (idx === 0) {
+          row.querySelector('#btn-add-path-field').addEventListener('click', () => {
+            const newRow = document.createElement('div');
+            newRow.className = 'path-input-row';
+            newRow.style.display = 'flex';
+            newRow.style.gap = '8px';
+            newRow.style.alignItems = 'center';
+            newRow.innerHTML = `
+              <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
+              <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            `;
+            container.appendChild(newRow);
+            newRow.querySelector('.btn-remove-path-field').addEventListener('click', () => { newRow.remove(); saveSessionCache(); });
+            saveSessionCache();
+          });
+        } else {
+          row.querySelector('.btn-remove-path-field').addEventListener('click', () => { row.remove(); saveSessionCache(); });
+        }
+      });
+    }
+  }
+
+  // 4. Restore files & materials
+  if (jobData.files && Array.isArray(jobData.files)) {
+    state.files = jobData.files;
+  }
+
+  if (jobData.materials && typeof jobData.materials === 'object') {
+    state.materials = jobData.materials;
+  }
+
+  // 5. Re-render UI components
+  displayScanResults();
+  buildWizard();
+  updateDatabasePreview();
+  renderPullSheetReport();
+  saveSessionCache();
+
+  // 6. Show active sections
+  if (document.getElementById('section-metadata')) document.getElementById('section-metadata').classList.remove('hidden');
+  if (document.getElementById('section-wizard')) document.getElementById('section-wizard').classList.remove('hidden');
+  if (document.getElementById('section-export')) document.getElementById('section-export').classList.remove('hidden');
+  const scanResults = document.getElementById('scan-results');
+  if (scanResults && state.files && state.files.length > 0) {
+    scanResults.classList.remove('hidden');
+  }
+
+  const matCount = Object.keys(state.materials || {}).length;
+  const projectLabel = state.metadata.projectName || state.metadata.jobNumber || fileName || 'Project';
+  showToast('Job Imported', `Loaded "${projectLabel}" with ${matCount} material${matCount === 1 ? '' : 's'}.`, 'success');
+}
+

@@ -245,6 +245,29 @@ while ($listener.IsListening) {
             Write-Host "SQLite Database successfully saved to: $dbPath" -ForegroundColor Green
             Send-Json $context 200 @{ message = "Database successfully written to: $dbPath" }
         }
+        elseif ($method -eq "POST" -and $urlPath -eq "/api/save-job") {
+            Write-Host "[DEBUG] Handling save-job request..." -ForegroundColor Gray
+            $body = Get-RequestBody $request
+            $inputData = ConvertFrom-Json $body
+            $targetPath = $inputData.targetPath
+            $jobJson = $inputData.jobJson
+            $fileName = if ($inputData.fileName) { $inputData.fileName } else { "pull_sheet_job.json" }
+            
+            if (-not (Test-Path $targetPath)) {
+                Send-Json $context 400 @{ message = "Target directory does not exist: $targetPath" }
+                continue
+            }
+            
+            $filePath = Join-Path $targetPath $fileName
+            Write-Host "[DEBUG] Writing job state file to: $filePath" -ForegroundColor Gray
+            [System.IO.File]::WriteAllText($filePath, $jobJson, [System.Text.Encoding]::UTF8)
+            
+            Write-Host "Job configuration successfully saved to: $filePath" -ForegroundColor Green
+            Send-Json $context 200 @{ 
+                message = "Job configuration successfully saved to: $filePath"
+                savedPath = $filePath 
+            }
+        }
         elseif ($method -eq "POST" -and $urlPath -eq "/api/generate-demo") {
             $demoPath = Join-Path $PSScriptRoot "demo-project"
             
