@@ -2466,7 +2466,21 @@ async function handleSaveJob() {
     }))
   };
 
-  const fileName = 'pull_sheet_job.json';
+  const rawJobNumber = (state.metadata && state.metadata.jobNumber ? state.metadata.jobNumber.trim() : '');
+  const cleanJobNumber = rawJobNumber.replace(/[/\\?%*:|"<>]/g, '-').trim();
+  
+  let fileName = 'pull_sheet.json';
+  if (cleanJobNumber) {
+    fileName = `${cleanJobNumber}_pull_sheet.json`;
+  } else {
+    // Check if target folder name starts with a job number (e.g. 180577-1)
+    const folderParts = (targetPaths[0] || '').split(/[\\/]/).filter(Boolean);
+    const lastFolder = folderParts[folderParts.length - 1] || '';
+    const match = lastFolder.match(/^(\d+-\d+)/);
+    if (match) {
+      fileName = `${match[1]}_pull_sheet.json`;
+    }
+  }
 
   // 1. Direct save to inputted project folder via backend server
   if (isServerConnected) {
@@ -2483,7 +2497,7 @@ async function handleSaveJob() {
 
       if (res.ok) {
         const resData = await res.json();
-        showToast('Job Saved', `Saved pull_sheet_job.json directly to project directory:\n${resData.savedPath || targetPaths[0]}`, 'success');
+        showToast('Job Saved', `Saved ${fileName} directly to project directory:\n${resData.savedPath || targetPaths[0]}`, 'success');
         saveSessionCache();
         return;
       } else {

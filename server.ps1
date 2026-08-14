@@ -279,8 +279,11 @@ while ($listener.IsListening) {
                 continue
             }
             
-            # Find any pull_sheet_job.json or *_job*.json in targetPath
-            $jobFiles = Get-ChildItem -Path $targetPath -Filter "*job*.json" -File | Sort-Object LastWriteTime -Descending
+            # Find any *_pull_sheet.json or *pull_sheet*.json or *job*.json in targetPath
+            $jobFiles = Get-ChildItem -Path $targetPath -Filter "*pull_sheet*.json" -File | Sort-Object LastWriteTime -Descending
+            if ($jobFiles.Count -eq 0) {
+                $jobFiles = Get-ChildItem -Path $targetPath -Filter "*job*.json" -File | Sort-Object LastWriteTime -Descending
+            }
             if ($jobFiles.Count -eq 0) {
                 $direct = Join-Path $targetPath "pull_sheet_job.json"
                 if (Test-Path $direct) {
