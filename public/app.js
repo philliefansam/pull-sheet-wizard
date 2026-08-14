@@ -1522,8 +1522,8 @@ function parseMPR(content) {
   let raw_max_y = 0;
   const xaCoords = [];
   const yaCoords = [];
-  const xCoords = [];
-  const yCoords = [];
+  const allXCoords = [];
+  const allYCoords = [];
   
   const lines = content.split(/\r?\n/);
   
@@ -1550,38 +1550,86 @@ function parseMPR(content) {
     const matchYA = line.match(/^\s*YA\s*=\s*"*([\d.-]+)"*/i);
     if (matchXA) xaCoords.push(parseFloat(matchXA[1]) / 25.4);
     if (matchYA) yaCoords.push(parseFloat(matchYA[1]) / 25.4);
-
-    // Parse general contour vertex coordinates X=, Y=
-    const matchX = line.match(/^\s*X\s*=\s*"*([\d.-]+)"*/i);
-    const matchY = line.match(/^\s*Y\s*=\s*"*([\d.-]+)"*/i);
-    if (matchX) xCoords.push(parseFloat(matchX[1]) / 25.4);
-    if (matchY) yCoords.push(parseFloat(matchY[1]) / 25.4);
   }
   
-  // Prioritize absolute sheet operation placement coordinates (XA/YA) over local contour polyline relative points
-  const targetX = xaCoords.length > 0 ? xaCoords : xCoords;
-  const targetY = yaCoords.length > 0 ? yaCoords : yCoords;
+  // Track contour macro bounding boxes (ignore small notch/groove sub-loops < 1")
+  let curBlockX = [];
+  let curBlockY = [];
+  const partMinXList = [];
+  const partMaxXList = [];
+  const partMinYList = [];
+  const partMaxYList = [];
 
-  // Filter out off-board lead-in / lead-out / trimming pass coordinates (< 0 or > raw_max)
-  const validX = targetX.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
-  const validY = targetY.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
-  
-  const net_x = validX.length > 0 ? Math.max(...validX) - Math.min(...validX) : 0; // Along Length
-  const net_y = validY.length > 0 ? Math.max(...validY) - Math.min(...validY) : 0; // Along Width
-  
-  const minX = validX.length > 0 ? Math.min(...validX) : 0;
-  const maxX = validX.length > 0 ? Math.max(...validX) : 0;
-  const minY = validY.length > 0 ? Math.min(...validY) : 0;
-  const maxY = validY.length > 0 ? Math.max(...validY) : 0;
-  
-  const recWidth = calculateFinalDimension(net_y, raw_max_x); // Final cropped Width
-  const recLength = calculateFinalDimension(net_x, raw_max_y); // Final cropped Length
-  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const matchX = line.match(/^\s*(?:\.X|X)\s*=\s*"*([\d.-]+)"*/i);
+    const matchY = line.match(/^\s*(?:\.Y|Y)\s*=\s*"*([\d.-]+)"*/i);
+    if (matchX) {
+      const vx = parseFloat(matchX[1]) / 25.4;
+      curBlockX.push(vx);
+      allXCoords.push(vx);
+    }
+    if (matchY) {
+      const vy = parseFloat(matchY[1]) / 25.4;
+      curBlockY.push(vy);
+      allYCoords.push(vy);
+    }
+
+    if (line.startsWith('<') || i === lines.length - 1) {
+      if (curBlockX.length > 0 && curBlockY.length > 0) {
+        const vx = curBlockX.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+        const vy = curBlockY.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
+        if (vx.length > 0 && vy.length > 0) {
+          const cMinX = Math.min(...vx);
+          const cMaxX = Math.max(...vx);
+          const cMinY = Math.min(...vy);
+          const cMaxY = Math.max(...vy);
+          const spanX = cMaxX - cMinX;
+          const spanY = cMaxY - cMinY;
+          // Only include major part contours (span > 1.0"), ignoring tiny notch sub-loops
+          if (spanX > 1.0 && spanY > 1.0) {
+            partMinXList.push(cMinX);
+            partMaxXList.push(cMaxX);
+            partMinYList.push(cMinY);
+            partMaxYList.push(cMaxY);
+          }
+        }
+        curBlockX = [];
+        curBlockY = [];
+      }
+    }
+  }
+
+  const validAllX = allXCoords.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+  const validAllY = allYCoords.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
+  const net_x = validAllX.length > 0 ? Math.max(...validAllX) - Math.min(...validAllX) : 0;
+  const net_y = validAllY.length > 0 ? Math.max(...validAllY) - Math.min(...validAllY) : 0;
+
+  const minX = partMinXList.length > 0 ? Math.min(...partMinXList) : (validAllX.length > 0 ? Math.min(...validAllX) : 0);
+  const maxX = partMaxXList.length > 0 ? Math.max(...partMaxXList) : (validAllX.length > 0 ? Math.max(...validAllX) : 0);
+  const minY = partMinYList.length > 0 ? Math.min(...partMinYList) : (validAllY.length > 0 ? Math.min(...validAllY) : 0);
+  const maxY = partMaxYList.length > 0 ? Math.max(...partMaxYList) : (validAllY.length > 0 ? Math.max(...validAllY) : 0);
+
+  const recWidth = calculateFinalDimension(net_y, raw_max_x);
+  const recLength = calculateFinalDimension(net_x, raw_max_y);
+
   // Ensure space from cut parts to all 4 edges of raw board is > 0"
-  const hasTrim = validX.length > 0 && validY.length > 0 &&
-                  minX > 0.01 && minY > 0.01 &&
-                  (raw_max_y - maxX) > 0.01 && (raw_max_x - maxY) > 0.01;
-  
+  let hasTrim = minX > 0.01 && minY > 0.01 && (raw_max_y - maxX) > 0.01 && (raw_max_x - maxY) > 0.01;
+
+  // Also check absolute drilling operations XA/YA if present
+  if (xaCoords.length > 0 && yaCoords.length > 0) {
+    const validXa = xaCoords.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+    const validYa = yaCoords.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
+    if (validXa.length > 0 && validYa.length > 0) {
+      const minXa = Math.min(...validXa);
+      const maxXa = Math.max(...validXa);
+      const minYa = Math.min(...validYa);
+      const maxYa = Math.max(...validYa);
+      const drlTrim = minXa > 0.01 && minYa > 0.01 && (raw_max_y - maxXa) > 0.01 && (raw_max_x - maxYa) > 0.01;
+      hasTrim = hasTrim && drlTrim;
+    }
+  }
+
   return {
     raw_max_x, // Board Width (Dimension 1)
     raw_max_y, // Board Length (Dimension 2)
