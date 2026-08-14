@@ -268,6 +268,41 @@ while ($listener.IsListening) {
                 savedPath = $filePath 
             }
         }
+        elseif ($method -eq "POST" -and $urlPath -eq "/api/load-job") {
+            Write-Host "[DEBUG] Handling load-job request..." -ForegroundColor Gray
+            $body = Get-RequestBody $request
+            $inputData = ConvertFrom-Json $body
+            $targetPath = $inputData.targetPath
+            
+            if (-not (Test-Path $targetPath)) {
+                Send-Json $context 400 @{ message = "Target directory does not exist: $targetPath" }
+                continue
+            }
+            
+            # Find any pull_sheet_job.json or *_job*.json in targetPath
+            $jobFiles = Get-ChildItem -Path $targetPath -Filter "*job*.json" -File | Sort-Object LastWriteTime -Descending
+            if ($jobFiles.Count -eq 0) {
+                $direct = Join-Path $targetPath "pull_sheet_job.json"
+                if (Test-Path $direct) {
+                    $jobFiles = @(Get-Item $direct)
+                }
+            }
+            
+            if ($jobFiles.Count -eq 0) {
+                Send-Json $context 404 @{ message = "No saved job configuration file found in: $targetPath" }
+                continue
+            }
+            
+            $targetFile = $jobFiles[0]
+            Write-Host "[DEBUG] Reading job file from: $($targetFile.FullName)" -ForegroundColor Gray
+            $content = [string](Get-Content -Path $targetFile.FullName -Raw)
+            
+            Send-Json $context 200 @{
+                fileName = $targetFile.Name
+                filePath = $targetFile.FullName
+                content = $content
+            }
+        }
         elseif ($method -eq "POST" -and $urlPath -eq "/api/generate-demo") {
             $demoPath = Join-Path $PSScriptRoot "demo-project"
             

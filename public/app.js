@@ -173,9 +173,7 @@ function setupEventListeners() {
   const btnImportJob = document.getElementById('btn-import-job');
   const fileImportInput = document.getElementById('file-import-job');
   if (btnImportJob && fileImportInput) {
-    btnImportJob.addEventListener('click', () => {
-      fileImportInput.click();
-    });
+    btnImportJob.addEventListener('click', handleImportJobClick);
     fileImportInput.addEventListener('change', handleImportJobFile);
   }
   
@@ -2416,7 +2414,7 @@ function downloadJsonFile(fileName, dataObj) {
   URL.revokeObjectURL(url);
 }
 
-// Save / Export job state with all user input and modifications to the scanned project folder
+// Save / Export job state directly to the inputted project directory without save dialogue
 async function handleSaveJob() {
   const hasData = (state.materials && Object.keys(state.materials).length > 0) || 
                   (state.files && state.files.length > 0) || 
@@ -2429,7 +2427,12 @@ async function handleSaveJob() {
 
   // Determine target paths from input fields
   const pathFields = Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value.trim()).filter(Boolean);
-  const targetPaths = pathFields.length > 0 ? pathFields : (state.pastedPath ? [state.pastedPath] : []);
+  const targetPaths = pathFields.length > 0 ? pathFields : (state.pastedPath ? [state.pastedPath.trim()] : []);
+
+  if (targetPaths.length === 0) {
+    showToast('Directory Required', 'Please enter or scan a target project folder path to save the job file.', 'warning');
+    return;
+  }
 
   // Build full job payload preserving all user modifications
   const jobPayload = {
@@ -2437,7 +2440,7 @@ async function handleSaveJob() {
     appName: 'Pull Sheet Wizard',
     savedAt: new Date().toISOString(),
     savedBy: state.metadata.operatorName || '',
-    pastedPath: state.pastedPath || (targetPaths[0] || ''),
+    pastedPath: state.pastedPath || targetPaths[0],
     pastedPathsList: targetPaths,
     metadata: Object.assign({}, state.metadata),
     settings: Object.assign({}, state.settings),
@@ -2451,22 +2454,10 @@ async function handleSaveJob() {
     }))
   };
 
-  const cleanJob = (state.metadata.jobNumber || '').replace(/[/\\?%*:|"<>]/g, '-').trim();
-  const cleanProject = (state.metadata.projectName || '').replace(/[/\\?%*:|"<>]/g, '-').trim();
-  let defaultFileName = 'pull_sheet_job.json';
-  if (cleanJob && cleanProject) {
-    defaultFileName = `${cleanJob}_${cleanProject}_job.json`;
-  } else if (cleanJob) {
-    defaultFileName = `${cleanJob}_job.json`;
-  } else if (cleanProject) {
-    defaultFileName = `${cleanProject}_job.json`;
-  }
+  const fileName = 'pull_sheet_job.json';
 
-  let savedToServer = false;
-  let serverSavedPath = '';
-
-  // 1. If backend server is connected and target path is available, save directly to project folder
-  if (isServerConnected && targetPaths.length > 0) {
+  // 1. Direct save to inputted project folder via backend server
+  if (isServerConnected) {
     try {
       const res = await fetch('/api/save-job', {
         method: 'POST',
@@ -2474,46 +2465,75 @@ async function handleSaveJob() {
         body: JSON.stringify({
           targetPath: targetPaths[0],
           jobJson: JSON.stringify(jobPayload, null, 2),
-          fileName: defaultFileName
+          fileName: fileName
         })
       });
 
       if (res.ok) {
         const resData = await res.json();
-        savedToServer = true;
-        serverSavedPath = resData.savedPath || targetPaths[0];
+        showToast('Job Saved', `Saved pull_sheet_job.json directly to project directory:\n${resData.savedPath || targetPaths[0]}`, 'success');
+        saveSessionCache();
+        return;
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        showToast('Save Failed', errData.message || `Directory does not exist or cannot be written: ${targetPaths[0]}`, 'error');
+        return;
       }
     } catch (e) {
-      console.warn('Backend /api/save-job request failed:', e);
+      console.error('Backend /api/save-job request error:', e);
+      showToast('Save Error', 'Connection error while saving job to server.', 'error');
+      return;
     }
   }
 
-  // 2. If browser File System Access API directory handle is active, save locally as well
-  let savedToHandle = false;
+  // 2. If browser File System Access API directory handle is active
   if (state.directoryHandle && state.directoryHandle.getFileHandle) {
     try {
-      const fileHandle = await state.directoryHandle.getFileHandle(defaultFileName, { create: true });
+      const fileHandle = await state.directoryHandle.getFileHandle(fileName, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(JSON.stringify(jobPayload, null, 2));
       await writable.close();
-      savedToHandle = true;
+      showToast('Job Saved', `Saved "${fileName}" directly to project directory.`, 'success');
+      saveSessionCache();
+      return;
     } catch (err) {
       console.warn('Could not write to native directory handle:', err);
     }
   }
 
-  // 3. Show feedback or fallback download
-  if (savedToServer) {
-    showToast('Job Saved', `Successfully exported job configuration to: ${serverSavedPath}`, 'success');
-  } else if (savedToHandle) {
-    showToast('Job Saved', `Saved "${defaultFileName}" to project directory.`, 'success');
-  } else {
-    // If offline or no server path matched, trigger direct JSON file download
-    downloadJsonFile(defaultFileName, jobPayload);
-    showToast('Job Export Downloaded', `Exported job state as "${defaultFileName}".`, 'success');
+  showToast('Server Disconnected', 'Backend server is offline. Cannot save directly to folder.', 'error');
+}
+
+// Handle Import Job button click: attempts direct folder load from path field, or opens file picker
+async function handleImportJobClick() {
+  const pathFields = Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value.trim()).filter(Boolean);
+  const targetPaths = pathFields.length > 0 ? pathFields : (state.pastedPath ? [state.pastedPath.trim()] : []);
+
+  // If a target folder is entered and server is online, attempt direct folder load first
+  if (isServerConnected && targetPaths.length > 0) {
+    try {
+      const res = await fetch('/api/load-job', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetPath: targetPaths[0] })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.content) {
+          const jobData = JSON.parse(data.content);
+          applyImportedJobData(jobData, data.fileName || data.filePath);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Direct load-job failed, falling back to file picker:', e);
+    }
   }
 
-  saveSessionCache();
+  // Fallback to file picker dialog
+  const fileImportInput = document.getElementById('file-import-job');
+  if (fileImportInput) fileImportInput.click();
 }
 
 // Handle Import Job file selection
