@@ -997,13 +997,19 @@ function buildWizard() {
     
     // Normalize core substrate state
     if (!mat.core_substrate) {
-      // Try to match or default to PB
-      if (name.toUpperCase().includes('BMCP')) mat.core_substrate = 'BMCP';
-      else if (name.toUpperCase().includes('WMCP')) mat.core_substrate = 'WMCP';
-      else if (name.toUpperCase().includes('PB')) mat.core_substrate = 'PB';
-      else if (name.toUpperCase().includes('MDF')) mat.core_substrate = 'MDF';
-      else if (name.toUpperCase().includes('PLY') || name.toUpperCase().includes('WOOD')) mat.core_substrate = 'Ply';
+      const uName = name.toUpperCase();
+      if (uName.includes('BMCP')) mat.core_substrate = 'BMCP';
+      else if (uName.includes('WMCP')) mat.core_substrate = 'WMCP';
+      else if (uName.includes('SOLID SURFACE') || /\bSS\b/i.test(name) || uName.endsWith(' SS') || uName.includes(' SS')) mat.core_substrate = 'Solid Surface';
+      else if (uName.includes('PB')) mat.core_substrate = 'PB';
+      else if (uName.includes('MDF')) mat.core_substrate = 'MDF';
+      else if (uName.includes('PLY') || uName.includes('WOOD')) mat.core_substrate = 'Ply';
       else mat.core_substrate = 'PB';
+    }
+
+    // Auto-default Solid Surface to Raw Material (No Layup)
+    if ((mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS') && mat.layup_required === undefined) {
+      mat.layup_required = 0;
     }
     
     const isRaw = mat.layup_required === 0;
@@ -1042,6 +1048,7 @@ function buildWizard() {
               <option value="Ply" ${mat.core_substrate === 'Ply' || mat.core_substrate === 'Plywood' ? 'selected' : ''}>Plywood (Ply)</option>
               <option value="BMCP" ${mat.core_substrate === 'BMCP' ? 'selected' : ''}>BMCP (Black MCP)</option>
               <option value="WMCP" ${mat.core_substrate === 'WMCP' ? 'selected' : ''}>WMCP (White MCP)</option>
+              <option value="Solid Surface" ${mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS' ? 'selected' : ''}>Solid Surface (SS)</option>
             </select>
           </div>
           <div class="form-group">
@@ -1133,8 +1140,15 @@ function buildWizard() {
     
     coreSelect.addEventListener('change', e => {
       mat.core_substrate = e.target.value;
+      if (mat.core_substrate === 'Solid Surface') {
+        mat.layup_required = 0;
+        rawCheckbox.checked = true;
+        faceInput.disabled = true;
+        backerInput.disabled = true;
+      }
       updateDatabasePreview();
       saveSessionCache();
+      renderPullSheetReport();
     });
 
     thicknessInput.addEventListener('input', e => {
