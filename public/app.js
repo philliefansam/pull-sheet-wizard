@@ -1008,7 +1008,8 @@ function buildWizard() {
     }
 
     // Auto-default Solid Surface to Raw Material (No Layup)
-    if ((mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS') && mat.layup_required === undefined) {
+    const isSolidSurface = mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS';
+    if (isSolidSurface) {
       mat.layup_required = 0;
     }
     
@@ -1064,8 +1065,8 @@ function buildWizard() {
             </select>
           </div>
           <div class="form-group checkbox-group" style="padding-bottom: 8px; flex-direction: column; gap: 8px; align-items: flex-start;">
-            <label class="checkbox-label">
-              <input type="checkbox" class="input-raw-material" ${isRaw ? 'checked' : ''}>
+            <label class="checkbox-label" ${isSolidSurface ? 'style="opacity: 0.75; cursor: not-allowed;" title="Solid Surface materials do not require layup"' : ''}>
+              <input type="checkbox" class="input-raw-material" ${isRaw ? 'checked' : ''} ${isSolidSurface ? 'disabled' : ''}>
               <span>Raw Material (No Lay-Up)</span>
             </label>
             <label class="checkbox-label">
@@ -1078,11 +1079,11 @@ function buildWizard() {
         <div class="form-row-grid">
           <div class="form-group">
             <label>Face Up Veneer/Laminate</label>
-            <input type="text" class="input-face" placeholder="Face Up Veneer/Laminate" value="${mat.face_material || ''}" ${isRaw ? 'disabled' : ''}>
+            <input type="text" class="input-face" placeholder="Face Up Veneer/Laminate" value="${mat.face_material || ''}" ${isRaw || isSolidSurface ? 'disabled' : ''}>
           </div>
           <div class="form-group">
             <label>Face Down Veneer/Laminate</label>
-            <input type="text" class="input-backer" placeholder="Face Down Veneer/Laminate" value="${mat.backer_material || ''}" ${isRaw ? 'disabled' : ''}>
+            <input type="text" class="input-backer" placeholder="Face Down Veneer/Laminate" value="${mat.backer_material || ''}" ${isRaw || isSolidSurface ? 'disabled' : ''}>
           </div>
         </div>
         
@@ -1103,6 +1104,10 @@ function buildWizard() {
     
     // Add raw checkbox event
     rawCheckbox.addEventListener('change', (e) => {
+      if (mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS') {
+        e.target.checked = true;
+        return;
+      }
       const isChecked = e.target.checked;
       mat.layup_required = isChecked ? 0 : 1;
       
@@ -1140,11 +1145,28 @@ function buildWizard() {
     
     coreSelect.addEventListener('change', e => {
       mat.core_substrate = e.target.value;
-      if (mat.core_substrate === 'Solid Surface') {
+      const isSS = mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS';
+      if (isSS) {
         mat.layup_required = 0;
         rawCheckbox.checked = true;
+        rawCheckbox.disabled = true;
+        rawCheckbox.parentElement.style.opacity = '0.75';
+        rawCheckbox.parentElement.style.cursor = 'not-allowed';
+        rawCheckbox.parentElement.title = 'Solid Surface materials do not require layup';
         faceInput.disabled = true;
         backerInput.disabled = true;
+      } else {
+        rawCheckbox.disabled = false;
+        rawCheckbox.parentElement.style.opacity = '1';
+        rawCheckbox.parentElement.style.cursor = 'pointer';
+        rawCheckbox.parentElement.title = '';
+        if (rawCheckbox.checked) {
+          faceInput.disabled = true;
+          backerInput.disabled = true;
+        } else {
+          faceInput.disabled = false;
+          backerInput.disabled = false;
+        }
       }
       updateDatabasePreview();
       saveSessionCache();
