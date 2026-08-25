@@ -21,3 +21,7 @@ change requests/
 
 # Node modules (if added in future)
 node_modules/
+
+# Local versioning scratch backups
+_versioning/
+
