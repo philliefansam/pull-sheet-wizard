@@ -22,6 +22,9 @@ change requests/
 # Node modules (if added in future)
 node_modules/
 
-# Local versioning scratch backups
+# Local versioning & project resources
 _versioning/
+Project Resources/
+project resources/
+
 
