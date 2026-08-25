@@ -11,11 +11,9 @@ if (-not (Test-Path $publicDir)) {
 
 $jsPath = Join-Path $publicDir "sql-wasm.js"
 $wasmPath = Join-Path $publicDir "sql-wasm.wasm"
-$konvaPath = Join-Path $publicDir "konva.min.js"
 
 $jsUrl = "https://unpkg.com/sql.js@1.8.0/dist/sql-wasm.js"
 $wasmUrl = "https://unpkg.com/sql.js@1.8.0/dist/sql-wasm.wasm"
-$konvaUrl = "https://unpkg.com/konva@9/konva.min.js"
 
 if (-not (Test-Path $jsPath)) {
     Write-Host "Downloading sql-wasm.js..." -ForegroundColor Cyan
@@ -24,10 +22,6 @@ if (-not (Test-Path $jsPath)) {
 if (-not (Test-Path $wasmPath)) {
     Write-Host "Downloading sql-wasm.wasm..." -ForegroundColor Cyan
     Invoke-WebRequest -Uri $wasmUrl -OutFile $wasmPath -UseBasicParsing
-}
-if (-not (Test-Path $konvaPath)) {
-    Write-Host "Downloading konva.min.js..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri $konvaUrl -OutFile $konvaPath -UseBasicParsing
 }
 
 # 2. Setup HTTP Listener
