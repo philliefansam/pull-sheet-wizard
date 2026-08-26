@@ -182,6 +182,11 @@ function setupEventListeners() {
     btnPrint.addEventListener('click', handlePrintPullSheet);
   }
 
+  const btnToggleAllMaterials = document.getElementById('btn-toggle-all-materials');
+  if (btnToggleAllMaterials) {
+    btnToggleAllMaterials.addEventListener('click', toggleAllMaterialGroups);
+  }
+
   const btnGeneratePullSheet = document.getElementById('btn-generate-pull-sheet');
   if (btnGeneratePullSheet) {
     btnGeneratePullSheet.addEventListener('click', () => {
@@ -972,42 +977,189 @@ function processScannedFiles() {
   });
 }
 
-// Display Scan Results
+// Display Scan Results with Collapsible Material Groups
 function displayScanResults() {
   const resultsDiv = document.getElementById('scan-results');
   const matList = document.getElementById('detected-materials');
   const fileBody = document.getElementById('discovered-files-body');
   
+  if (!resultsDiv || !matList || !fileBody) return;
+
   resultsDiv.classList.remove('hidden');
   matList.innerHTML = '';
   fileBody.innerHTML = '';
-  
-  Object.keys(state.materials).forEach(name => {
+
+  const materialNames = Object.keys(state.materials);
+
+  materialNames.forEach((name) => {
     const mat = state.materials[name];
+    const safeKey = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    // 1. Left List Item (Material Subfolders Identified)
     const li = document.createElement('li');
-    li.className = 'material-item';
+    li.className = 'material-item clickable-mat-item';
+    li.setAttribute('data-material-key', safeKey);
+    li.style.cursor = 'pointer';
+    li.style.userSelect = 'none';
+    li.title = 'Click to expand/collapse payload files for this material';
     li.innerHTML = `
-      <span>${name}</span>
-      <span class="material-tag">${mat.files.length} files</span>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="left-mat-chevron" style="display: inline-flex; transition: transform 0.2s ease; color: var(--text-muted);">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        </span>
+        <span style="font-weight: 600;">${name}</span>
+      </div>
+      <span class="material-tag">${mat.files.length} file${mat.files.length === 1 ? '' : 's'}</span>
     `;
+
+    // Click event for left panel item
+    li.addEventListener('click', () => {
+      toggleMaterialGroup(safeKey);
+    });
+
     matList.appendChild(li);
-    
+
+    // 2. Right Table Group Header Row
+    const headerTr = document.createElement('tr');
+    headerTr.className = 'material-group-header-row collapsed';
+    headerTr.setAttribute('id', `mat-header-${safeKey}`);
+    headerTr.setAttribute('data-material-key', safeKey);
+    headerTr.style.cursor = 'pointer';
+    headerTr.style.userSelect = 'none';
+
+    headerTr.innerHTML = `
+      <td colspan="4" style="padding: 10px 14px; background: rgba(30, 41, 59, 0.75); border-bottom: 1px solid var(--border-color);">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span class="chevron-icon" style="display: inline-flex; transition: transform 0.2s ease; color: var(--primary);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </span>
+            <strong style="color: var(--text-primary); font-size: 13px;">${name}</strong>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span class="badge badge-secondary" style="font-size: 11px; padding: 2px 8px; font-weight: 600;">${mat.files.length} file${mat.files.length === 1 ? '' : 's'}</span>
+            <span class="mat-toggle-hint" style="font-size: 11px; color: var(--text-muted);">Click to expand</span>
+          </div>
+        </div>
+      </td>
+    `;
+
+    // Click event for table header row
+    headerTr.addEventListener('click', () => {
+      toggleMaterialGroup(safeKey);
+    });
+
+    fileBody.appendChild(headerTr);
+
+    // 3. Right Table File Rows (Hidden when collapsed by default)
     mat.files.forEach(f => {
       const ext = f.name.split('.').pop().toUpperCase();
       const tr = document.createElement('tr');
+      tr.className = `material-file-row group-files-${safeKey} hidden`;
+      tr.style.background = 'rgba(15, 23, 42, 0.4)';
+
       const statusBadge = f.isReintro 
         ? `<span class="badge badge-warning" style="background: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.3);">Re-Intro (Excluded)</span>`
         : `<span class="status-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> Parsed</span>`;
 
       tr.innerHTML = `
-        <td>${name}</td>
-        <td>${f.name}</td>
+        <td style="padding-left: 32px; color: var(--text-muted); font-size: 12px;">${name}</td>
+        <td style="font-weight: 500; font-family: var(--font-mono, monospace); font-size: 12px;">${f.name}</td>
         <td><span class="badge badge-${ext.toLowerCase()}">${ext}</span></td>
         <td>${statusBadge}</td>
       `;
       fileBody.appendChild(tr);
     });
   });
+
+  updateExpandAllButtonState();
+}
+
+// Toggle expansion of a specific material group
+function toggleMaterialGroup(safeKey, forceState) {
+  const headerTr = document.getElementById(`mat-header-${safeKey}`);
+  const fileRows = document.querySelectorAll(`.group-files-${safeKey}`);
+  const leftItem = document.querySelector(`.clickable-mat-item[data-material-key="${safeKey}"]`);
+
+  if (!headerTr) return;
+
+  const isCurrentlyCollapsed = headerTr.classList.contains('collapsed');
+  const shouldExpand = forceState !== undefined ? forceState : isCurrentlyCollapsed;
+
+  const chevron = headerTr.querySelector('.chevron-icon');
+  const leftChevron = leftItem ? leftItem.querySelector('.left-mat-chevron') : null;
+  const hintText = headerTr.querySelector('.mat-toggle-hint');
+
+  if (shouldExpand) {
+    headerTr.classList.remove('collapsed');
+    headerTr.classList.add('expanded');
+    if (chevron) chevron.style.transform = 'rotate(90deg)';
+    if (leftChevron) leftChevron.style.transform = 'rotate(90deg)';
+    if (leftItem) {
+      leftItem.style.borderColor = 'var(--primary)';
+      leftItem.style.background = 'rgba(99, 102, 241, 0.12)';
+    }
+    if (hintText) hintText.textContent = 'Click to collapse';
+
+    fileRows.forEach(row => row.classList.remove('hidden'));
+
+    // Scroll group into view inside container if triggered from left panel
+    if (forceState === undefined) {
+      headerTr.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  } else {
+    headerTr.classList.remove('expanded');
+    headerTr.classList.add('collapsed');
+    if (chevron) chevron.style.transform = 'rotate(0deg)';
+    if (leftChevron) leftChevron.style.transform = 'rotate(0deg)';
+    if (leftItem) {
+      leftItem.style.borderColor = 'var(--border-color)';
+      leftItem.style.background = 'var(--bg-sidebar)';
+    }
+    if (hintText) hintText.textContent = 'Click to expand';
+
+    fileRows.forEach(row => row.classList.add('hidden'));
+  }
+
+  updateExpandAllButtonState();
+}
+
+// Toggle Expand All / Collapse All
+function toggleAllMaterialGroups() {
+  const allHeaders = document.querySelectorAll('.material-group-header-row');
+  if (allHeaders.length === 0) return;
+
+  const anyCollapsed = Array.from(allHeaders).some(h => h.classList.contains('collapsed'));
+  const targetState = anyCollapsed;
+
+  allHeaders.forEach(h => {
+    const key = h.getAttribute('data-material-key');
+    if (key) toggleMaterialGroup(key, targetState);
+  });
+}
+
+// Update Expand All button label and icon
+function updateExpandAllButtonState() {
+  const btn = document.getElementById('btn-toggle-all-materials');
+  if (!btn) return;
+
+  const allHeaders = document.querySelectorAll('.material-group-header-row');
+  if (allHeaders.length === 0) return;
+
+  const anyCollapsed = Array.from(allHeaders).some(h => h.classList.contains('collapsed'));
+  if (anyCollapsed) {
+    btn.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="7 13 12 18 17 13"></polyline><polyline points="7 6 12 11 17 6"></polyline></svg>
+      <span>Expand All</span>
+    `;
+  } else {
+    btn.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 11 12 6 7 11"></polyline><polyline points="17 18 12 13 7 18"></polyline></svg>
+      <span>Collapse All</span>
+    `;
+  }
 }
 
 // Build Layout / Laminate Routing Wizard Steps
@@ -2383,12 +2535,14 @@ function renderPullSheetReport() {
             const isMcpCore = (core === 'BMCP' || core === 'WMCP');
             
             let stackHtml = '';
+            let runBadgeHtml = '';
             if (r.custom_layup) {
               const runName = r.custom_layup.runFileName || r.fileName || '';
-              const runBadgeHtml = runName ? `<div class="ps-layup-run-badge">Program File: <strong>${runName}</strong></div>` : '';
+              if (runName) {
+                runBadgeHtml = `<div class="ps-layup-run-badge">${runName}</div>`;
+              }
               stackHtml = `
                 <div class="ps-layup-diagram-container">
-                  ${runBadgeHtml}
                   ${generateCustomLayupSvg(r.custom_layup)}
                 </div>
               `;
@@ -2439,6 +2593,7 @@ function renderPullSheetReport() {
                 <div class="ps-layup-qty">(${r.quantity})</div>
                 ${stackHtml}
                 <div class="ps-layup-dims">
+                  ${runBadgeHtml}
                   <div>${thickStr} ${boundsStr}</div>
                   ${offcutNoteHtml}
                   <div style="font-size: 12px; font-weight: normal; margin-top: 4px; color: #444;">${grainDisplay}</div>
@@ -2960,12 +3115,11 @@ function generateCustomLayupSvg(layupData) {
 
   const svgW = 460;
   const svgH = 210;
-  
-  const marginL = 50;
+  const marginL = 34;
   const marginT = 24;
-  const maxRectW = 345;
-  const maxRectH = 145;
-  
+  const maxRectW = 390;
+  const maxRectH = 152;
+
   const scale = Math.min(maxRectW / totalL, maxRectH / totalW);
   const rectW = totalL * scale;
   const rectH = totalW * scale;
@@ -3045,13 +3199,20 @@ function generateCustomLayupSvg(layupData) {
     }
   }
 
-  const grain1Svg = makeGrainSymbol(half1X + half1W / 2, half1Y + half1H / 2 + 20, grain);
-  const grain2Svg = makeGrainSymbol(half2X + half2W / 2, half2Y + half2H / 2 + 20, grain);
+  function getReqPillWidth(text) {
+    const cleanText = text || 'Laminate';
+    return Math.max(50, cleanText.length * 7 + 16);
+  }
+
+  function getPillWidth(text, maxW) {
+    const cleanText = text || 'Laminate';
+    const textLen = getReqPillWidth(cleanText);
+    return Math.min(maxW - 8, textLen);
+  }
 
   function makePill(cx, cy, text, maxW) {
     const cleanText = text || 'Laminate';
-    const textLen = Math.max(50, cleanText.length * 7 + 16);
-    const pillW = Math.min(maxW - 8, textLen);
+    const pillW = getPillWidth(cleanText, maxW);
     return `
       <g transform="translate(${cx}, ${cy})">
         <rect x="${-pillW / 2}" y="-11" width="${pillW}" height="22" rx="11" ry="11" fill="#ffffff" stroke="#000000" stroke-width="1.2"/>
@@ -3060,8 +3221,55 @@ function generateCustomLayupSvg(layupData) {
     `;
   }
 
-  const pill1Svg = makePill(half1X + half1W / 2, half1Y + half1H / 2 - (grain !== 'No Grain' ? 12 : 0), labelA, half1W);
-  const pill2Svg = makePill(half2X + half2W / 2, half2Y + half2H / 2 - (grain !== 'No Grain' ? 12 : 0), labelB, half2W);
+  function makeLeaderLine(tx, ty, dirX, dirY, text) {
+    const cleanText = text || 'Laminate';
+    const ex = tx + (dirX >= 0 ? 22 : -22);
+    const ey = ty + (dirY >= 0 ? 20 : -20);
+    const sx = ex + (dirX >= 0 ? 28 : -28);
+    const textAnchor = dirX >= 0 ? 'start' : 'end';
+    const textX = dirX >= 0 ? sx + 4 : sx - 4;
+    return `
+      <g>
+        <circle cx="${tx}" cy="${ty}" r="2.5" fill="#d32f2f"/>
+        <polyline points="${tx},${ty} ${ex},${ey} ${sx},${ey}" fill="none" stroke="#d32f2f" stroke-width="1.2"/>
+        <text x="${textX}" y="${ey + 3.5}" font-family="'Outfit', 'Inter', sans-serif" font-size="10" font-weight="700" fill="#d32f2f" text-anchor="${textAnchor}">${cleanText}</text>
+      </g>
+    `;
+  }
+
+  const reqW1 = getReqPillWidth(labelA);
+  const reqW2 = getReqPillWidth(labelB);
+
+  const isSmall1 = isVert ? (half1W < reqW1 + 8) : (half1H < 22);
+  const isSmall2 = isVert ? (half2W < reqW2 + 8) : (half2H < 22);
+
+  let pill1Svg, pill2Svg, grain1Svg, grain2Svg;
+  if (isVert) {
+    grain1Svg = makeGrainSymbol(half1X + half1W / 2, half1Y + half1H / 2 + 20, grain);
+    grain2Svg = makeGrainSymbol(half2X + half2W / 2, half2Y + half2H / 2 + 20, grain);
+
+    pill1Svg = isSmall1 
+      ? makeLeaderLine(half1X + half1W / 2, half1Y + half1H / 2, -1, -1, labelA)
+      : makePill(half1X + half1W / 2, half1Y + half1H / 2 - (grain !== 'No Grain' ? 12 : 0), labelA, half1W);
+
+    pill2Svg = isSmall2
+      ? makeLeaderLine(half2X + half2W / 2, half2Y + half2H / 2, 1, -1, labelB)
+      : makePill(half2X + half2W / 2, half2Y + half2H / 2 - (grain !== 'No Grain' ? 12 : 0), labelB, half2W);
+  } else {
+    const pill1W = getPillWidth(labelA, half1W);
+    const pill2W = getPillWidth(labelB, half2W);
+
+    pill1Svg = isSmall1
+      ? makeLeaderLine(half1X + half1W / 2, half1Y + half1H / 2, 1, 1, labelA)
+      : makePill(half1X + half1W / 2, half1Y + half1H / 2, labelA, half1W);
+
+    pill2Svg = isSmall2
+      ? makeLeaderLine(half2X + half2W / 2, half2Y + half2H / 2, 1, -1, labelB)
+      : makePill(half2X + half2W / 2, half2Y + half2H / 2, labelB, half2W);
+
+    grain1Svg = makeGrainSymbol(half1X + half1W / 2 + pill1W / 2 + 24, half1Y + half1H / 2, grain);
+    grain2Svg = makeGrainSymbol(half2X + half2W / 2 + pill2W / 2 + 24, half2Y + half2H / 2, grain);
+  }
 
   // Split dimensions annotations on both halves
   let splitDimsSvg = '';
@@ -3391,8 +3599,9 @@ function renderLayupKonvaCanvas() {
     const textStr = labelText || (isPillA ? 'Laminate A' : 'Laminate B');
     const pillGroup = new Konva.Group();
 
-    const tempText = new Konva.Text({ text: textStr, fontSize: 12, fontFamily: 'Outfit' });
-    const pillW = Math.max(60, tempText.width() + 24);
+    const measurer = new Konva.Text({ text: textStr, fontSize: 12, fontFamily: 'Outfit', fontStyle: 'bold' });
+    const textW = Math.max(36, measurer.width());
+    const pillW = textW + 24;
     const pillH = 26;
 
     const bg = new Konva.Rect({
@@ -3440,15 +3649,19 @@ function renderLayupKonvaCanvas() {
       const currentVal = isPillA ? stateObj.labelA : stateObj.labelB;
       const newVal = prompt(`Rename ${targetLabel}:`, currentVal);
       if (newVal !== null && newVal.trim()) {
-        if (isPillA) stateObj.labelA = newVal.trim();
-        else stateObj.labelB = newVal.trim();
+        const cleanStr = newVal.trim();
+        if (isPillA) stateObj.labelA = cleanStr;
+        else stateObj.labelB = cleanStr;
         
-        txt.text(newVal.trim());
-        const newW = Math.max(60, txt.width() + 24);
-        bg.width(newW);
-        bg.x(-newW / 2);
-        txt.width(newW);
-        txt.x(-newW / 2);
+        txt.text(cleanStr);
+        const m = new Konva.Text({ text: cleanStr, fontSize: 12, fontFamily: 'Outfit', fontStyle: 'bold' });
+        const exactTextW = Math.max(36, m.width());
+        const exactPillW = exactTextW + 24;
+
+        bg.width(exactPillW);
+        bg.x(-exactPillW / 2);
+        txt.width(exactPillW);
+        txt.x(-exactPillW / 2);
         updateDynamicVisuals(false);
       }
     });
@@ -3734,10 +3947,19 @@ function renderLayupKonvaCanvas() {
     layer.add(d1Line, d1Tick1, d1Tick2, d1Badge, d2Line, d2Tick1, d2Tick2, d2Badge);
   }
 
+  // 6b. Leader Line Shapes for Small Space Halves
+  const leader1Dot = new Konva.Circle({ radius: 3, fill: '#38bdf8', listening: false, visible: false });
+  const leader1Line = new Konva.Line({ points: [0,0,0,0,0,0], stroke: '#38bdf8', strokeWidth: 1.5, listening: false, visible: false });
+  const leader2Dot = new Konva.Circle({ radius: 3, fill: '#38bdf8', listening: false, visible: false });
+  const leader2Line = new Konva.Line({ points: [0,0,0,0,0,0], stroke: '#38bdf8', strokeWidth: 1.5, listening: false, visible: false });
+  layer.add(leader1Line, leader1Dot, leader2Line, leader2Dot);
+
   // 7. Dynamic Updater (mutates shape properties smoothly without destroying stage)
   function updateDynamicVisuals(isDragging) {
     const curSplit = stateObj.splitPos;
     const curSplitPx = curSplit * scale;
+    const p1W = pill1Obj.bg.width();
+    const p2W = pill2Obj.bg.width();
 
     if (isVert) {
       if (!isDragging) {
@@ -3748,9 +3970,44 @@ function renderLayupKonvaCanvas() {
       rectHalfB.x(originX + curSplitPx);
       rectHalfB.width(sheetPxW - curSplitPx);
 
-      const pillOffset = (stateObj.grainDirection !== 'No Grain') ? -14 : 0;
-      pill1Obj.group.position({ x: originX + curSplitPx / 2, y: originY + sheetPxH / 2 + pillOffset });
-      pill2Obj.group.position({ x: originX + curSplitPx + (sheetPxW - curSplitPx) / 2, y: originY + sheetPxH / 2 + pillOffset });
+      const isSmall1 = curSplitPx < p1W + 10;
+      const isSmall2 = (sheetPxW - curSplitPx) < p2W + 10;
+
+      // Half 1 Leader Line vs Centered Pill
+      if (isSmall1) {
+        const tx1 = originX + curSplitPx / 2;
+        const ty1 = originY + sheetPxH / 2;
+        const ex1 = tx1 - 22;
+        const ey1 = ty1 - 32;
+        const sx1 = ex1 - 28;
+
+        leader1Dot.position({ x: tx1, y: ty1 }).show();
+        leader1Line.points([tx1, ty1, ex1, ey1, sx1, ey1]).show();
+        pill1Obj.group.position({ x: sx1 - p1W / 2, y: ey1 });
+      } else {
+        leader1Dot.hide();
+        leader1Line.hide();
+        const pillOffset = (stateObj.grainDirection !== 'No Grain') ? -14 : 0;
+        pill1Obj.group.position({ x: originX + curSplitPx / 2, y: originY + sheetPxH / 2 + pillOffset });
+      }
+
+      // Half 2 Leader Line vs Centered Pill
+      if (isSmall2) {
+        const tx2 = originX + curSplitPx + (sheetPxW - curSplitPx) / 2;
+        const ty2 = originY + sheetPxH / 2;
+        const ex2 = tx2 + 22;
+        const ey2 = ty2 - 32;
+        const sx2 = ex2 + 28;
+
+        leader2Dot.position({ x: tx2, y: ty2 }).show();
+        leader2Line.points([tx2, ty2, ex2, ey2, sx2, ey2]).show();
+        pill2Obj.group.position({ x: sx2 + p2W / 2, y: ey2 });
+      } else {
+        leader2Dot.hide();
+        leader2Line.hide();
+        const pillOffset = (stateObj.grainDirection !== 'No Grain') ? -14 : 0;
+        pill2Obj.group.position({ x: originX + curSplitPx + (sheetPxW - curSplitPx) / 2, y: originY + sheetPxH / 2 + pillOffset });
+      }
 
       if (grain1Group && grain2Group) {
         grain1Group.position({ x: originX + curSplitPx / 2, y: originY + sheetPxH / 2 + 25 });
@@ -3775,13 +4032,46 @@ function renderLayupKonvaCanvas() {
       rectHalfB.y(originY + curSplitPx);
       rectHalfB.height(sheetPxH - curSplitPx);
 
-      const pillOffset = (stateObj.grainDirection !== 'No Grain') ? -14 : 0;
-      pill1Obj.group.position({ x: originX + sheetPxW / 2, y: originY + curSplitPx / 2 + pillOffset });
-      pill2Obj.group.position({ x: originX + sheetPxW / 2, y: originY + curSplitPx + (sheetPxH - curSplitPx) / 2 + pillOffset });
+      const isSmall1 = curSplitPx < 26;
+      const isSmall2 = (sheetPxH - curSplitPx) < 26;
+
+      // Half 1 Leader Line vs Centered Pill
+      if (isSmall1) {
+        const tx1 = originX + sheetPxW / 2;
+        const ty1 = originY + curSplitPx / 2;
+        const ex1 = tx1 + p1W / 2 + 20;
+        const ey1 = ty1 - 25;
+        const sx1 = ex1 + 25;
+
+        leader1Dot.position({ x: tx1, y: ty1 }).show();
+        leader1Line.points([tx1, ty1, ex1, ey1, sx1, ey1]).show();
+        pill1Obj.group.position({ x: sx1 + p1W / 2, y: ey1 });
+      } else {
+        leader1Dot.hide();
+        leader1Line.hide();
+        pill1Obj.group.position({ x: originX + sheetPxW / 2, y: originY + curSplitPx / 2 });
+      }
+
+      // Half 2 Leader Line vs Centered Pill
+      if (isSmall2) {
+        const tx2 = originX + sheetPxW / 2;
+        const ty2 = originY + curSplitPx + (sheetPxH - curSplitPx) / 2;
+        const ex2 = tx2 + p2W / 2 + 20;
+        const ey2 = ty2 + 25;
+        const sx2 = ex2 + 25;
+
+        leader2Dot.position({ x: tx2, y: ty2 }).show();
+        leader2Line.points([tx2, ty2, ex2, ey2, sx2, ey2]).show();
+        pill2Obj.group.position({ x: sx2 + p2W / 2, y: ey2 });
+      } else {
+        leader2Dot.hide();
+        leader2Line.hide();
+        pill2Obj.group.position({ x: originX + sheetPxW / 2, y: originY + curSplitPx + (sheetPxH - curSplitPx) / 2 });
+      }
 
       if (grain1Group && grain2Group) {
-        grain1Group.position({ x: originX + sheetPxW / 2, y: originY + curSplitPx / 2 + 25 });
-        grain2Group.position({ x: originX + sheetPxW / 2, y: originY + curSplitPx + (sheetPxH - curSplitPx) / 2 + 25 });
+        grain1Group.position({ x: originX + sheetPxW / 2 + p1W / 2 + 28, y: originY + curSplitPx / 2 });
+        grain2Group.position({ x: originX + sheetPxW / 2 + p2W / 2 + 28, y: originY + curSplitPx + (sheetPxH - curSplitPx) / 2 });
       }
 
       d1Line.points([splitDimX, originY, splitDimX, originY + curSplitPx]);
@@ -3905,7 +4195,7 @@ function initLayupWizardModalEvents() {
       updateDatabasePreview();
       renderPullSheetReport();
       saveSessionCache();
-      showToast('Lay-Up Reverted', `Reverted ${mat.name} (Sheet ${currentLayupState.sheetIdx + 1}) to standard lay-up.`, 'info');
+      showToast('Lay-Up Reverted', `Reverted ${mat.name} (Sheet ${currentLayupState.sheetIdx + 1}) to original lay-up.`, 'info');
     });
   }
 }

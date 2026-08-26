@@ -480,10 +480,63 @@ input[type="text"]:focus, select:focus {
 }
 
 /* Tables */
-.file-table-container, .table-preview-container {
+.file-table-container {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+
+.file-table-container::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.file-table-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-table-container::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+.file-table-container::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.table-preview-container {
   border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
+}
+
+.clickable-mat-item {
+  transition: all 0.2s ease;
+}
+
+.clickable-mat-item:hover {
+  border-color: var(--primary) !important;
+  background-color: var(--bg-card-hover) !important;
+  transform: translateX(2px);
+}
+
+.material-group-header-row {
+  transition: background-color 0.2s ease;
+}
+
+.material-group-header-row:hover td {
+  background-color: rgba(51, 65, 85, 0.8) !important;
+}
+
+.material-file-row {
+  transition: background-color 0.15s ease;
+}
+
+.material-file-row:hover td {
+  background-color: rgba(30, 41, 59, 0.6) !important;
 }
 
 table {
@@ -1350,16 +1403,15 @@ input:disabled, select:disabled {
 .ps-layup-run-badge {
   font-family: 'JetBrains Mono', monospace, sans-serif;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   color: #0f172a;
   background: #f1f5f9;
   border: 1px solid #cbd5e1;
-  padding: 3px 10px;
+  padding: 2px 8px;
   border-radius: 4px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   display: inline-block;
   letter-spacing: 0.3px;
-  text-align: center;
 }
 
 @media print {
@@ -1369,6 +1421,6 @@ input:disabled, select:disabled {
     background: #ffffff;
     font-size: 11px;
     font-weight: bold;
-    padding: 2px 8px;
+    padding: 1px 6px;
   }
 }
