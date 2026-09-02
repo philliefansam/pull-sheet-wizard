@@ -2494,7 +2494,8 @@ function renderPullSheetReport() {
           rowsToRender.forEach(r => {
             const thickStr = formatThicknessStr(r.thickness || 0.75);
             const boundsStr = formatBoundsStr(r.final_length, r.final_width, r.raw_max_x, r.raw_max_y);
-            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(5x9)') && !boundsStr.includes('(4x8)');
+            const isWholeSheets = !!(mat.use_whole_sheets || r.use_whole_sheets);
+            const isCustomSize = !isWholeSheets && !boundsStr.includes('(5x10)') && !boundsStr.includes('(5x9)') && !boundsStr.includes('(4x8)');
             const offcutNote = isCustomSize ? ' - If offcut is available' : '';
 
             html += `
@@ -2523,7 +2524,8 @@ function renderPullSheetReport() {
             final_length: mat.final_length,
             final_width: mat.final_width,
             raw_max_x: mat.raw_max_x,
-            raw_max_y: mat.raw_max_y
+            raw_max_y: mat.raw_max_y,
+            use_whole_sheets: mat.use_whole_sheets || 0
           }];
 
           rowsToRender.forEach(r => {
@@ -2585,7 +2587,8 @@ function renderPullSheetReport() {
             }
 
             const grainDisplay = r.grain_direction === 'No Grain' ? 'No Grain' : `${r.grain_direction || 'Horizontal'} Grain`;
-            const isCustomSize = !boundsStr.includes('(5x10)') && !boundsStr.includes('(5x9)') && !boundsStr.includes('(4x8)');
+            const isWholeSheets = !!(mat.use_whole_sheets || r.use_whole_sheets);
+            const isCustomSize = !isWholeSheets && !boundsStr.includes('(5x10)') && !boundsStr.includes('(5x9)') && !boundsStr.includes('(4x8)');
             const offcutNoteHtml = isCustomSize ? `<div style="font-size: 11px; font-weight: normal; margin-top: 2px; color: #d32f2f; font-style: italic;">If offcut is available</div>` : '';
 
             html += `
@@ -3183,7 +3186,7 @@ function generateCustomLayupSvg(layupData) {
           <line x1="0" y1="-14" x2="0" y2="14" stroke="#444444" stroke-width="1.2"/>
           <polyline points="-4,-9 0,-14 4,-9" fill="none" stroke="#444444" stroke-width="1.2"/>
           <polyline points="-4,9 0,14 4,9" fill="none" stroke="#444444" stroke-width="1.2"/>
-          <text x="6" y="8" font-family="'Inter', sans-serif" font-size="8" fill="#444444" transform="rotate(-90 6, 8)">Grain</text>
+          <text x="12" y="0" font-family="'Inter', sans-serif" font-size="8" fill="#444444" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 12, 0)">Grain</text>
         </g>
       `;
     } else {
@@ -3332,8 +3335,8 @@ function generateCustomLayupSvg(layupData) {
       <line x1="${rectX - 18}" y1="${rectY + rectH}" x2="${rectX}" y2="${rectY + rectH}" stroke="#000000" stroke-width="0.8"/>
       <polyline points="${rectX - 15},${rectY + 6} ${rectX - 12},${rectY} ${rectX - 9},${rectY + 6}" fill="none" stroke="#000000" stroke-width="1"/>
       <polyline points="${rectX - 15},${rectY + rectH - 6} ${rectX - 12},${rectY + rectH} ${rectX - 9},${rectY + rectH - 6}" fill="none" stroke="#000000" stroke-width="1"/>
-      <rect x="${rectX - 26}" y="${rectY + rectH / 2 - 12}" width="28" height="24" fill="#ffffff"/>
-      <text x="${rectX - 14}" y="${rectY + rectH / 2 + 5}" font-family="'Outfit', 'Inter', sans-serif" font-size="13" font-weight="700" fill="#000000" text-anchor="middle" transform="rotate(-90 ${rectX - 14}, ${rectY + rectH / 2 + 5})">${strTotalW}</text>
+      <rect x="${rectX - 24}" y="${rectY + rectH / 2 - 14}" width="24" height="28" fill="#ffffff"/>
+      <text x="${rectX - 12}" y="${rectY + rectH / 2}" font-family="'Outfit', 'Inter', sans-serif" font-size="13" font-weight="700" fill="#000000" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 ${rectX - 12}, ${rectY + rectH / 2})">${strTotalW}</text>
 
       <!-- Sheet Outer Outline -->
       <rect x="${rectX}" y="${rectY}" width="${rectW}" height="${rectH}" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
@@ -3546,8 +3549,8 @@ function renderLayupKonvaCanvas() {
         strokeWidth: 1.2
       });
       const txt = new Konva.Text({
-        x: 6,
-        y: 8,
+        x: 12,
+        y: 12,
         text: 'Grain',
         fontSize: 9,
         fontFamily: 'Inter',
@@ -3703,7 +3706,7 @@ function renderLayupKonvaCanvas() {
 
   const leftText = new Konva.Text({
     x: leftDimX - 22,
-    y: originY + sheetPxH / 2 + 20,
+    y: originY + sheetPxH / 2 + 12,
     text: formatLayupDimension(totalW, useFeetInches, stateObj.precision),
     fontSize: 13,
     fontFamily: 'Outfit',
