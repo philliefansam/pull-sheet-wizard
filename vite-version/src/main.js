@@ -1,0 +1,4341 @@
+import './sql-wasm.js';
+import './konva.min.js';
+import { getSqlWasmBinary } from './sqlWasmBinary.js';
+
+const state = {
+  pastedPath: '',
+  files: [],
+  materials: {}, // Keyed by material name (subfolder)
+  metadata: {
+    jobNumber: '',
+    client: '',
+    projectName: '',
+    operatorName: '',
+    dateProcessed: ''
+  },
+  settings: {
+    overcutOverage: 2.0,
+    minOffcutDim: 6.0
+  },
+  SQL: null,
+  activeTab: 'tab-project-metadata',
+  directoryHandle: null // Native file system handle
+};
+
+const SHOP_CLEARANCE = 2.0;
+
+// Format OS username into professional engineer display name (e.g. "shanni" -> "Shanni")
+function formatUsernameAsEngineer(rawName) {
+  if (!rawName) return '';
+  const clean = String(rawName).trim();
+  if (clean.includes('.')) {
+    return clean
+      .split('.')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+  }
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+// Initialize when DOM is loaded
+document.addEventListener('DOMContentLoaded', async () => {
+  initApp();
+});
+
+// App Entry Point
+async function initApp() {
+  // Set default date
+  const today = new Date();
+  state.metadata.dateProcessed = today.toISOString().split('T')[0];
+  document.getElementById('meta-date-processed').value = state.metadata.dateProcessed;
+
+  // Prefill build-time PC username if available
+  if (typeof __PC_USERNAME__ !== 'undefined' && __PC_USERNAME__) {
+    const defaultUser = formatUsernameAsEngineer(__PC_USERNAME__);
+    state.metadata.operatorName = defaultUser;
+    const opInput = document.getElementById('meta-operator-name');
+    if (opInput) opInput.value = defaultUser;
+  }
+  
+  // Set up event listeners
+  setupEventListeners();
+
+  // Restore session cache if present
+  restoreSessionCache();
+  
+  // Check backend server connection and start live 4s heartbeat polling
+  await checkServerConnection(true);
+  setInterval(() => {
+    checkServerConnection(true);
+  }, 4000);
+  
+  // Load SQLite WASM (offline inlined WebAssembly)
+  await loadSqlWasm();
+}
+
+let isServerConnected = false;
+let companionApiBase = '';
+
+// Check if backend server is responsive with cache-busting and live heartbeat
+async function checkServerConnection(silent = false) {
+  const statusEl = document.getElementById('connection-status');
+  if (!statusEl) return;
+
+  const endpoints = ['http://localhost:9994/api/status', '/api/status'];
+  let connected = false;
+  let activeBase = '';
+  let serverData = null;
+
+  for (const ep of endpoints) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1200);
+      const res = await fetch(ep + '?_t=' + Date.now(), { 
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        serverData = await res.json();
+        connected = true;
+        activeBase = ep.startsWith('http') ? 'http://localhost:9994' : '';
+        break;
+      }
+    } catch (e) {
+      // Continue to next endpoint
+    }
+  }
+
+  if (connected) {
+    companionApiBase = activeBase;
+    if (!isServerConnected || statusEl.classList.contains('offline')) {
+      isServerConnected = true;
+      statusEl.className = 'status-indicator online';
+      statusEl.querySelector('.indicator-text').textContent = 'Companion Server Connected';
+      if (!silent) {
+        showToast('Server Connected', 'Backend companion server connection established.', 'success');
+      }
+    }
+    
+    if (serverData && serverData.username && !state.metadata.operatorName) {
+      state.metadata.operatorName = formatUsernameAsEngineer(serverData.username);
+      const opInput = document.getElementById('meta-operator-name');
+      if (opInput) opInput.value = state.metadata.operatorName;
+      updateDatabasePreview();
+    }
+  } else {
+    isServerConnected = false;
+    companionApiBase = '';
+    if (statusEl.classList.contains('online') || !statusEl.classList.contains('offline')) {
+      statusEl.className = 'status-indicator offline';
+      statusEl.querySelector('.indicator-text').textContent = 'Standalone Single-File Mode';
+    }
+  }
+}
+
+// Load SQL.js WebAssembly completely offline
+async function loadSqlWasm() {
+  try {
+    if (typeof initSqlJs !== 'undefined') {
+      const wasmBinary = getSqlWasmBinary();
+      state.SQL = await initSqlJs({
+        wasmBinary: wasmBinary
+      });
+      console.log('SQL.js initialized successfully (offline inlined WASM).');
+    } else {
+      showToast('WASM Error', 'SQL.js library failed to load.', 'error');
+    }
+  } catch (e) {
+    console.error('Failed to init SQL.js:', e);
+    showToast('WASM Error', 'Could not initialize SQLite WebAssembly compiler.', 'error');
+  }
+}
+
+// Setup Event Listeners
+function setupEventListeners() {
+  // Sidebar navigation
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      
+      const targetSection = item.id.replace('nav-', 'section-');
+      document.querySelectorAll('main > .content-body > section').forEach(sec => {
+        if (sec.id === targetSection || sec.id === 'section-scan') {
+          sec.classList.remove('hidden');
+        } else {
+          sec.classList.add('hidden');
+        }
+      });
+      // Show metadata if wizard, database, or pull sheet is shown
+      if (targetSection === 'section-wizard' || targetSection === 'section-export' || targetSection === 'section-pull-sheet') {
+        document.getElementById('section-metadata').classList.remove('hidden');
+      }
+      if (targetSection === 'section-pull-sheet') {
+        renderPullSheetReport();
+      }
+      saveSessionCache();
+    });
+  });
+
+  // Buttons
+  document.getElementById('btn-scan').addEventListener('click', handleScan);
+  document.getElementById('btn-select-folder').addEventListener('click', handleSelectFolder);
+  document.getElementById('btn-generate-demo').addEventListener('click', handleGenerateDemo);
+  document.getElementById('btn-export-sqlite').addEventListener('click', handleExportSqlite);
+  
+  // Pressing Enter in scan path input field triggers scan button click
+  const pathsContainer = document.getElementById('paths-list-container');
+  if (pathsContainer) {
+    pathsContainer.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target && e.target.classList.contains('pasted-path-field')) {
+        e.preventDefault();
+        const btnScan = document.getElementById('btn-scan');
+        if (btnScan) btnScan.click();
+      }
+    });
+  }
+  
+  const btnReset = document.getElementById('btn-reset-project');
+  if (btnReset) {
+    btnReset.addEventListener('click', handleResetProject);
+  }
+  
+  const btnSaveJob = document.getElementById('btn-save-job');
+  if (btnSaveJob) {
+    btnSaveJob.addEventListener('click', handleSaveJob);
+  }
+
+  const btnImportJob = document.getElementById('btn-import-job');
+  const fileImportInput = document.getElementById('file-import-job');
+  if (btnImportJob && fileImportInput) {
+    btnImportJob.addEventListener('click', handleImportJobClick);
+    fileImportInput.addEventListener('change', handleImportJobFile);
+  }
+  
+  const btnPrint = document.getElementById('btn-print-pull-sheet');
+  if (btnPrint) {
+    btnPrint.addEventListener('click', handlePrintPullSheet);
+  }
+
+  const btnToggleAllMaterials = document.getElementById('btn-toggle-all-materials');
+  if (btnToggleAllMaterials) {
+    btnToggleAllMaterials.addEventListener('click', toggleAllMaterialGroups);
+  }
+
+  const btnGeneratePullSheet = document.getElementById('btn-generate-pull-sheet');
+  if (btnGeneratePullSheet) {
+    btnGeneratePullSheet.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+      const navPullSheet = document.getElementById('nav-pull-sheet');
+      if (navPullSheet) navPullSheet.classList.add('active');
+      
+      document.querySelectorAll('main > .content-body > section').forEach(sec => {
+        if (sec.id === 'section-pull-sheet' || sec.id === 'section-scan' || sec.id === 'section-metadata') {
+          sec.classList.remove('hidden');
+        } else {
+          sec.classList.add('hidden');
+        }
+      });
+      renderPullSheetReport();
+      saveSessionCache();
+    });
+  }
+  
+  // Plus sign path button
+  document.getElementById('btn-add-path-field').addEventListener('click', () => {
+    const container = document.getElementById('paths-list-container');
+    const row = document.createElement('div');
+    row.className = 'path-input-row';
+    row.style.display = 'flex';
+    row.style.gap = '8px';
+    row.style.alignItems = 'center';
+    row.innerHTML = `
+      <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
+      <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    `;
+    container.appendChild(row);
+    
+    // Bind delete click
+    row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
+      row.remove();
+      saveSessionCache();
+    });
+    saveSessionCache();
+  });
+  
+  // Settings inputs
+  document.getElementById('settings-overcut').addEventListener('input', e => {
+    const val = parseFloat(e.target.value);
+    if (!isNaN(val) && val >= 0) {
+      state.settings.overcutOverage = val;
+      if (state.files.length > 0) {
+        processScannedFiles();
+        buildWizard();
+        updateDatabasePreview();
+      }
+      saveSessionCache();
+    }
+  });
+  document.getElementById('settings-offcut').addEventListener('input', e => {
+    const val = parseFloat(e.target.value);
+    if (!isNaN(val) && val >= 0) {
+      state.settings.minOffcutDim = val;
+      if (state.files.length > 0) {
+        processScannedFiles();
+        buildWizard();
+        updateDatabasePreview();
+      }
+      saveSessionCache();
+    }
+  });
+  
+  // Metadata inputs
+  document.getElementById('meta-job-number').addEventListener('input', e => {
+    state.metadata.jobNumber = e.target.value;
+    updateDatabasePreview();
+    saveSessionCache();
+  });
+  document.getElementById('meta-client').addEventListener('input', e => {
+    state.metadata.client = e.target.value;
+    updateDatabasePreview();
+    saveSessionCache();
+  });
+  document.getElementById('meta-project-name').addEventListener('input', e => {
+    state.metadata.projectName = e.target.value;
+    updateDatabasePreview();
+    saveSessionCache();
+  });
+  document.getElementById('meta-operator-name').addEventListener('input', e => {
+    state.metadata.operatorName = e.target.value;
+    updateDatabasePreview();
+    saveSessionCache();
+  });
+  
+  // Database Preview Tabs
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      const tabId = btn.getAttribute('data-tab');
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+      document.getElementById(tabId).classList.remove('hidden');
+    });
+  });
+
+  // Initialize Lay-Up Wizard Modal event listeners
+  initLayupWizardModalEvents();
+}
+
+// Reset all project fields, state, and session cache to start a new project
+function handleResetProject() {
+  if (confirm('Are you sure you want to reset all fields and clear cached project data to start a new project?')) {
+    // 1. Clear session cache from localStorage
+    localStorage.removeItem('pull_sheet_wizard_session');
+
+    // 2. Reset global state object
+    const savedOperator = state.metadata ? state.metadata.operatorName : '';
+    state.files = [];
+    state.scannedFiles = [];
+    state.materials = {};
+    state.pastedPath = '';
+    state.metadata = {
+      jobNumber: '',
+      client: '',
+      projectName: '',
+      operatorName: savedOperator || '',
+      dateProcessed: new Date().toLocaleDateString('en-US')
+    };
+
+    // 3. Reset target folder path inputs
+    const pathsContainer = document.getElementById('paths-list-container');
+    if (pathsContainer) {
+      pathsContainer.innerHTML = `
+        <div class="path-input-row" style="display: flex; gap: 8px; align-items: center;">
+          <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="">
+          <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      `;
+      const addBtn = document.getElementById('btn-add-path-field');
+      if (addBtn) {
+        addBtn.addEventListener('click', () => {
+          const row = document.createElement('div');
+          row.className = 'path-input-row';
+          row.style.display = 'flex';
+          row.style.gap = '8px';
+          row.style.alignItems = 'center';
+          row.innerHTML = `
+            <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
+            <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          `;
+          pathsContainer.appendChild(row);
+          row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
+            row.remove();
+            saveSessionCache();
+          });
+          saveSessionCache();
+        });
+      }
+    }
+
+    // 4. Reset Project Details metadata input fields
+    const metaJob = document.getElementById('meta-job-number');
+    if (metaJob) metaJob.value = '';
+    const metaClient = document.getElementById('meta-client');
+    if (metaClient) metaClient.value = '';
+    const metaPrj = document.getElementById('meta-project-name');
+    if (metaPrj) metaPrj.value = '';
+    const metaOp = document.getElementById('meta-operator-name');
+    if (metaOp) metaOp.value = savedOperator || '';
+    const metaDate = document.getElementById('meta-date-processed');
+    if (metaDate) metaDate.value = state.metadata.dateProcessed;
+
+    // 5. Clear scan results & file tables
+    const detectedMaterials = document.getElementById('detected-materials');
+    if (detectedMaterials) detectedMaterials.innerHTML = '';
+    const discoveredFilesBody = document.getElementById('discovered-files-body');
+    if (discoveredFilesBody) discoveredFilesBody.innerHTML = '';
+    const scanResults = document.getElementById('scan-results');
+    if (scanResults) scanResults.classList.add('hidden');
+
+    // 6. Clear Lay-Up Wizard & Pull Sheet Report
+    const wizardSteps = document.getElementById('wizard-steps');
+    if (wizardSteps) wizardSteps.innerHTML = '';
+    const reportContainer = document.getElementById('pull-sheet-report-container');
+    if (reportContainer) reportContainer.innerHTML = '';
+
+    // 7. Clear SQLite Preview Tables
+    const dbMetadataRows = document.getElementById('db-metadata-rows');
+    if (dbMetadataRows) dbMetadataRows.innerHTML = '';
+    const dbSummaryRows = document.getElementById('db-summary-rows');
+    if (dbSummaryRows) dbSummaryRows.innerHTML = '';
+
+    // 8. Reset active navigation tab and section visibility
+    document.querySelectorAll('main > .content-body > section').forEach(sec => {
+      if (sec.id === 'section-scan') {
+        sec.classList.remove('hidden');
+      } else {
+        sec.classList.add('hidden');
+      }
+    });
+
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    const navDashboard = document.getElementById('nav-dashboard') || document.getElementById('nav-scan');
+    if (navDashboard) navDashboard.classList.add('active');
+
+    showToast('Project Reset', 'All cached data, paths, and material fields have been cleared.', 'info');
+  }
+}
+
+// Offline demo dataset loader
+function loadOfflineDemoFiles() {
+  state.pastedPath = "180577-1 Criteo Corp - Reception Desk";
+  document.querySelector('.pasted-path-field').value = state.pastedPath;
+  state.files = [
+    {
+      name: "pull_sheet.txt",
+      relativePath: "3-4 2S Natural Recon/pull_sheet.txt",
+      scannedPath: state.pastedPath,
+      content: `Spray Booth --> then Homag\n(2) WA NATURAL RECON/7996-38\n    PB                             3/4" (46"x79")\n    BKR\n\nHomag\n(4) 3/4" Plywood (5x10)`
+    },
+    {
+      name: "nested_cabinet_parts.mpr",
+      relativePath: "3-4 2S Natural Recon/nested_cabinet_parts.mpr",
+      scannedPath: state.pastedPath,
+      content: `[001\nl="2440.0"\nw="1220.0"\nh="19.0"\n]2\nKL X="100.0" Y="100.0"\nKL X="2340.0" Y="1120.0"`
+    },
+    {
+      name: "layup_instructions.txt",
+      relativePath: "1-1-8 2S PB Core/layup_instructions.txt",
+      scannedPath: state.pastedPath,
+      content: `Spray Booth --> then Beam Saw\n(1) OAK VENEER PREMIUM\n    PB                             1-1/8" (5x10)\n    BKR`
+    },
+    {
+      name: "closet_shelves.hop",
+      relativePath: "1-1-8 2S PB Core/closet_shelves.hop",
+      scannedPath: state.pastedPath,
+      content: `VARS\nDX := 120.0\nDY := 60.0\nSTART\nSP(10.0, 10.0)\nG01(110.0, 50.0)`
+    },
+    {
+      name: "shelf_run.cpout",
+      relativePath: "1-1-8 2S PB Core/shelf_run.cpout",
+      scannedPath: state.pastedPath,
+      content: `INV1,1,2,3,60.0,120.0\nORD1,1,2,96.0,24.0\nORD1,1,2,80.0,18.0`
+    }
+  ];
+
+  processScannedFiles();
+  displayScanResults();
+  buildWizard();
+  updateDatabasePreview();
+  prefillMetadata();
+
+  document.getElementById('section-metadata').classList.remove('hidden');
+  document.getElementById('section-wizard').classList.remove('hidden');
+  document.getElementById('section-export').classList.remove('hidden');
+
+  showToast('Demo Loaded', 'Sample project loaded into memory for offline preview.', 'success');
+}
+
+// Generate Demo Files
+async function handleGenerateDemo() {
+  const btn = document.getElementById('btn-generate-demo');
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+  
+  if (isServerConnected) {
+    try {
+      const res = await fetch(`${companionApiBase}/api/generate-demo`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        document.querySelector('.pasted-path-field').value = data.demoPath;
+        showToast('Demo Generated', `Demo project created at: ${data.demoPath}`, 'success');
+        handleScan();
+        return;
+      }
+    } catch (e) {
+      console.warn('Server demo generation failed, using offline fallback:', e);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        Generate Demo Files
+      `;
+    }
+  }
+
+  // Standalone offline demo generation
+  loadOfflineDemoFiles();
+  btn.disabled = false;
+  btn.innerHTML = `
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    Generate Demo Files
+  `;
+}
+
+// Handle Directory Scanning
+async function handleScan() {
+  const fields = document.querySelectorAll('.pasted-path-field');
+  // Support both multi-fields and comma/semicolon delimited entries in any field
+  const paths = [];
+  fields.forEach(el => {
+    const val = el.value.trim();
+    if (val) {
+      val.split(/[;,]/).map(p => p.trim()).filter(Boolean).forEach(p => {
+        if (!paths.includes(p)) paths.push(p);
+      });
+    }
+  });
+  
+  if (paths.length === 0) {
+    showToast('Input Required', 'Please paste at least one target folder path or click "Select Project Folder".', 'warning');
+    return;
+  }
+
+  if (!isServerConnected) {
+    showToast('Companion Server Offline', 'Cannot scan pasted paths without companion server. Please click "Select Project Folder" to scan folders directly.', 'warning');
+    return;
+  }
+  
+  state.pastedPath = paths[0]; // Prefill metadata uses the first path
+  const btn = document.getElementById('btn-scan');
+  const progress = document.getElementById('scan-progress');
+  const progressFill = progress.querySelector('.progress-bar-fill');
+  const progressText = progress.querySelector('.progress-text');
+  
+  btn.disabled = true;
+  progress.classList.remove('hidden');
+  progressFill.style.width = '20%';
+  progressText.textContent = 'Scanning target directories...';
+  
+  try {
+    state.files = [];
+    
+    // Fetch folders in parallel via companion server
+    const scanPromises = paths.map(async (p) => {
+      const res = await fetch(`${companionApiBase}/api/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: p })
+      });
+      
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(`Scanning path "${p}" failed: ${err.message || 'Error'}`);
+      }
+      return res.json();
+    });
+    
+    progressFill.style.width = '50%';
+    progressText.textContent = 'Processing files...';
+    
+    const results = await Promise.all(scanPromises);
+    
+    // Combine all files from all scanned paths
+    results.forEach((data, index) => {
+      if (data.files && Array.isArray(data.files)) {
+        const currentScannedPath = paths[index] || state.pastedPath;
+        data.files.forEach(f => {
+          if (!f.scannedPath) f.scannedPath = currentScannedPath;
+          // Prevent duplicates by unique key combining scannedPath and relativePath
+          const uniqueKey = `${f.scannedPath}/${f.relativePath}`;
+          if (!state.files.some(existing => `${existing.scannedPath || ''}/${existing.relativePath}` === uniqueKey)) {
+            state.files.push(f);
+          }
+        });
+      }
+      if (data.username) {
+        state.metadata.operatorName = data.username;
+        document.getElementById('meta-operator-name').value = data.username;
+      }
+    });
+    
+    progressFill.style.width = '75%';
+    progressText.textContent = 'Grouping materials by machine and layup types...';
+    
+    // Group files by material subfolder
+    processScannedFiles();
+    
+    progressFill.style.width = '100%';
+    progressText.textContent = 'Scan complete!';
+    
+    setTimeout(() => {
+      progress.classList.add('hidden');
+      btn.disabled = false;
+      displayScanResults();
+      buildWizard();
+      updateDatabasePreview();
+      
+      // Auto prefill metadata from folder name if empty
+      prefillMetadata();
+      
+      // Reveal sections
+      document.getElementById('section-metadata').classList.remove('hidden');
+      document.getElementById('section-wizard').classList.remove('hidden');
+      document.getElementById('section-export').classList.remove('hidden');
+      
+      showToast('Scan Successful', `Loaded ${Object.keys(state.materials).length} materials from target directories.`, 'success');
+    }, 500);
+    
+  } catch (e) {
+    console.error(e);
+    progress.classList.add('hidden');
+    btn.disabled = false;
+    showToast('Scan Failed', e.message || 'Could not complete directory scan.', 'error');
+  }
+}
+
+// Handle Native Folder Selection (File System Access API)
+async function handleSelectFolder() {
+  if (typeof window.showDirectoryPicker === 'undefined') {
+    showToast('Not Supported', 'Your browser does not support native folder selection. Please use Chrome or Edge.', 'warning');
+    return;
+  }
+  
+  try {
+    const dirHandle = await window.showDirectoryPicker({
+      mode: 'readwrite'
+    });
+    
+    state.directoryHandle = dirHandle;
+    state.pastedPath = dirHandle.name;
+    document.querySelector('.pasted-path-field').value = `Local: ${dirHandle.name}`;
+    
+    const progress = document.getElementById('scan-progress');
+    const progressFill = progress.querySelector('.progress-bar-fill');
+    const progressText = progress.querySelector('.progress-text');
+    const btn = document.getElementById('btn-select-folder');
+    
+    btn.disabled = true;
+    progress.classList.remove('hidden');
+    progressFill.style.width = '30%';
+    progressText.textContent = 'Reading local files recursively...';
+    
+    const fileList = await readDirectoryRecursive(dirHandle);
+    
+    progressFill.style.width = '70%';
+    progressText.textContent = 'Parsing file payloads...';
+    
+    state.files = fileList;
+    processScannedFiles();
+    
+    progressFill.style.width = '100%';
+    progressText.textContent = 'Scan complete!';
+    
+    setTimeout(() => {
+      progress.classList.add('hidden');
+      btn.disabled = false;
+      displayScanResults();
+      buildWizard();
+      updateDatabasePreview();
+      
+      // Prefill metadata
+      prefillMetadata();
+      
+      document.getElementById('section-metadata').classList.remove('hidden');
+      document.getElementById('section-wizard').classList.remove('hidden');
+      document.getElementById('section-export').classList.remove('hidden');
+      
+      showToast('Scan Successful', `Loaded ${Object.keys(state.materials).length} materials from directory picker.`, 'success');
+    }, 500);
+    
+  } catch (e) {
+    console.error(e);
+    const progress = document.getElementById('scan-progress');
+    if (progress) progress.classList.add('hidden');
+    document.getElementById('btn-select-folder').disabled = false;
+    if (e.name !== 'AbortError') {
+      showToast('Scan Failed', 'Could not read directory files.', 'error');
+    }
+  }
+}
+
+
+// Recursive directory reader helper for File System Access API
+async function readDirectoryRecursive(dirHandle, pathAccumulator = '') {
+  let fileList = [];
+  for await (const entry of dirHandle.values()) {
+    const relativePath = pathAccumulator ? `${pathAccumulator}/${entry.name}` : entry.name;
+    if (entry.kind === 'file') {
+      const nameLower = entry.name.toLowerCase();
+      const ext = nameLower.split('.').pop();
+      if (['mpr', 'hop', 'cpout', 'cpl', 'txt', 'pull'].includes(ext) || nameLower.includes('cpout')) {
+        try {
+          const file = await entry.getFile();
+          const content = await file.text();
+          fileList.push({
+            name: entry.name,
+            relativePath: relativePath,
+            content: content
+          });
+        } catch (err) {
+          console.warn('Skipping file due to read error:', relativePath, err);
+        }
+      }
+    } else if (entry.kind === 'directory') {
+      const subFiles = await readDirectoryRecursive(entry, relativePath);
+      fileList = fileList.concat(subFiles);
+    }
+  }
+  return fileList;
+}
+
+// Prefill Metadata
+function prefillMetadata() {
+  const parts = state.pastedPath.split(/[\\/]/);
+  const folderName = parts[parts.length - 1] || parts[parts.length - 2] || '';
+  
+  // Try to match something like "180577-1 Criteo Corp - Reception Desk"
+  const match = folderName.match(/^(\d+-\d+)\s+(.+)$/);
+  if (match) {
+    if (!state.metadata.jobNumber) {
+      state.metadata.jobNumber = match[1];
+      document.getElementById('meta-job-number').value = match[1];
+    }
+    
+    const rest = match[2];
+    if (rest.includes(' - ')) {
+      const restParts = rest.split(' - ');
+      const clientName = restParts[0].trim();
+      const prjName = restParts.slice(1).join(' - ').trim();
+      
+      if (!state.metadata.client) {
+        state.metadata.client = clientName;
+        document.getElementById('meta-client').value = clientName;
+      }
+      if (!state.metadata.projectName) {
+        state.metadata.projectName = prjName;
+        document.getElementById('meta-project-name').value = prjName;
+      }
+    } else {
+      if (!state.metadata.projectName) {
+        state.metadata.projectName = rest;
+        document.getElementById('meta-project-name').value = rest;
+      }
+    }
+  } else if (!state.metadata.projectName) {
+    state.metadata.projectName = folderName;
+    document.getElementById('meta-project-name').value = folderName;
+  }
+}
+
+// Helper to parse thickness in inches from material folder name (e.g. "1 1-8" -> 1.125, "3-4" -> 0.75, "15-16" -> 0.9375)
+function parseThicknessFromName(name) {
+  if (!name) return 0.75;
+  const cleanName = name.trim();
+  
+  const matchWholeFrac = cleanName.match(/^(\d+)[\s-]+(\d+)[-/](\d+)(?![a-zA-Z])/);
+  if (matchWholeFrac) {
+    const whole = parseFloat(matchWholeFrac[1]);
+    const num = parseFloat(matchWholeFrac[2]);
+    const den = parseFloat(matchWholeFrac[3]);
+    if (den !== 0) return parseFloat((whole + (num / den)).toFixed(4));
+  }
+  
+  const matchFrac = cleanName.match(/^(\d+)[-/](\d+)(?![a-zA-Z])/);
+  if (matchFrac) {
+    const num = parseFloat(matchFrac[1]);
+    const den = parseFloat(matchFrac[2]);
+    if (den !== 0) return parseFloat((num / den).toFixed(4));
+  }
+  
+  const matchDec = cleanName.match(/^(\d+\.\d+)/);
+  if (matchDec) {
+    return parseFloat(matchDec[1]);
+  }
+  
+  return 0.75;
+}
+
+// Helper to extract clean material subfolder name from relative path
+function extractMaterialName(relativePath, scannedPath, fileContent, fileName) {
+  if (fileContent && (fileName || '').toLowerCase().includes('cpout')) {
+    const matchInv2 = fileContent.match(/INV2\s*,\s*([^,\r\n]+)/i);
+    if (matchInv2 && matchInv2[1].trim()) {
+      const matStr = matchInv2[1].replace(/\(.*?\)/, '').trim();
+      if (matStr) return matStr;
+    }
+  }
+
+  if (!relativePath) return 'Unclassified';
+  const parts = relativePath.split('/');
+  // Filter out file name (last element) and intermediate subfolders like "Run59" or "Run62"
+  const folderParts = parts.slice(0, -1).filter(p => !/^Run\d+$/i.test(p));
+  if (folderParts.length === 0) {
+    const targetP = scannedPath || state.pastedPath || '';
+    const rootParts = targetP.split(/[\\/]/).filter(Boolean);
+    const rootName = rootParts[rootParts.length - 1] || 'Unclassified';
+    return rootName;
+  }
+  
+  return folderParts[folderParts.length - 1];
+}
+
+// Helper to detect target machine of a file
+function detectFileMachine(file) {
+  const nameLower = file.name ? file.name.toLowerCase() : '';
+  const ext = nameLower.split('.').pop();
+  
+  // Explicit file extension rules MUST NOT be overridden by folder keywords
+  if (ext === 'mpr') return 'Homag';
+  if (ext === 'hop') return 'Holzher CNC';
+  if (ext === 'cpout' || ext === 'cpl' || nameLower.includes('cpout')) return 'Holzher Beam Saw';
+
+  const relPathLower = (file.relativePath || '').toLowerCase();
+  const scannedPathLower = (file.scannedPath || '').toLowerCase();
+  const fullPathLower = (relPathLower + ' ' + scannedPathLower).toLowerCase();
+  
+  if (fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw')) {
+    return 'Holzher Beam Saw';
+  }
+  if (fullPathLower.includes('holzher') || fullPathLower.includes('dynestic')) {
+    return 'Holzher CNC';
+  }
+  if (fullPathLower.includes('homag')) {
+    return 'Homag';
+  }
+  
+  if (ext === 'txt' || ext === 'pull') {
+    const upperContent = (file.content || '').toUpperCase();
+    if (upperContent.includes('THEN BEAM SAW') || upperContent.includes('BEAM SAW')) {
+      return 'Holzher Beam Saw';
+    }
+    if (upperContent.includes('THEN HOLZHER') || upperContent.includes('HOLZHER CNC') || upperContent.includes('HOLZHER')) {
+      return 'Holzher CNC';
+    }
+  }
+  return 'Homag';
+}
+
+// Group and parse files by material subfolder
+function processScannedFiles() {
+  const previousMetadata = {};
+  if (state.materials) {
+    Object.keys(state.materials).forEach(key => {
+      const m = state.materials[key];
+      previousMetadata[key] = {
+        layup_required: m.layup_required,
+        face_material: m.face_material,
+        core_substrate: m.core_substrate,
+        backer_material: m.backer_material,
+        machine_type: m.machine_type,
+        thickness: m.thickness,
+        grain_direction: m.grain_direction,
+        use_whole_sheets: m.use_whole_sheets,
+        sheets: m.sheets
+      };
+    });
+  }
+
+  function getPrevSheetData(key, fileName, idx) {
+    const prev = previousMetadata[key];
+    if (!prev || !prev.sheets) return {};
+    const match = prev.sheets.find(s => s.fileName === fileName) || prev.sheets[idx];
+    if (match) {
+      const res = {};
+      if (match.is_modified) {
+        res.is_modified = true;
+        res.manual_final_length = match.manual_final_length;
+        res.manual_final_width = match.manual_final_width;
+      }
+      if (match.custom_layup) {
+        res.custom_layup = match.custom_layup;
+      }
+      return res;
+    }
+    return {};
+  }
+
+  state.materials = {};
+  
+  state.files.forEach(file => {
+    const materialName = extractMaterialName(file.relativePath, file.scannedPath, file.content, file.name);
+    const machineType = detectFileMachine(file);
+    
+    // Create unique key based on material and machine to avoid grouping router and beam saw jobs together
+    const key = `${materialName} (${machineType})`;
+    
+    if (!state.materials[key]) {
+      const prev = previousMetadata[key];
+      state.materials[key] = {
+        key: key,
+        name: materialName,
+        files: [],
+        sheets: [], // Store individual sheet dimensions
+        raw_max_x: 0,
+        raw_max_y: 0,
+        final_length: 0,
+        final_width: 0,
+        machine_type: machineType,
+        layup_required: prev ? prev.layup_required : 0, // 0 = False, 1 = True
+        face_material: prev ? prev.face_material : '',
+        core_substrate: prev ? prev.core_substrate : '',
+        backer_material: prev ? prev.backer_material : '',
+        thickness: prev ? prev.thickness : parseThicknessFromName(materialName),
+        grain_direction: prev ? prev.grain_direction : 'Horizontal',
+        use_whole_sheets: prev ? (prev.use_whole_sheets || 0) : 0,
+        pullSheetData: null,
+        toolpathData: null
+      };
+    }
+    
+    const mat = state.materials[key];
+    mat.files.push(file);
+    
+    const fileName = file.name || '';
+    const ext = fileName.split('.').pop().toLowerCase();
+    const isReintro = fileName.length > 0 && fileName.charAt(0) === 'r';
+    
+    if (isReintro) {
+      file.isReintro = true;
+      return;
+    }
+    
+    // Parse individual files
+    if (ext === 'mpr') {
+      const parsed = parseMPR(file.content);
+      mat.raw_max_x = Math.max(mat.raw_max_x, parsed.raw_max_x);
+      mat.raw_max_y = Math.max(mat.raw_max_y, parsed.raw_max_y);
+      mat.final_length = Math.max(mat.final_length, parsed.recommended_length);
+      mat.final_width = Math.max(mat.final_width, parsed.recommended_width);
+      mat.toolpathData = parsed;
+      
+      mat.sheets.push({
+        fileName: file.name,
+        raw_max_x: parsed.raw_max_x,
+        raw_max_y: parsed.raw_max_y,
+        net_length: parsed.net_length,
+        net_width: parsed.net_width,
+        final_length: parsed.recommended_length,
+        final_width: parsed.recommended_width,
+        hasTrim: parsed.hasTrim,
+        ...getPrevSheetData(key, file.name, mat.sheets.length)
+      });
+    } else if (ext === 'hop') {
+      const parsed = parseHOP(file.content);
+      mat.raw_max_x = Math.max(mat.raw_max_x, parsed.raw_max_x);
+      mat.raw_max_y = Math.max(mat.raw_max_y, parsed.raw_max_y);
+      mat.final_length = Math.max(mat.final_length, parsed.recommended_length);
+      mat.final_width = Math.max(mat.final_width, parsed.recommended_width);
+      mat.toolpathData = parsed;
+      
+      mat.sheets.push({
+        fileName: file.name,
+        raw_max_x: parsed.raw_max_x,
+        raw_max_y: parsed.raw_max_y,
+        net_length: parsed.net_length,
+        net_width: parsed.net_width,
+        final_length: parsed.recommended_length,
+        final_width: parsed.recommended_width,
+        hasTrim: parsed.hasTrim,
+        ...getPrevSheetData(key, file.name, mat.sheets.length)
+      });
+    } else if (ext === 'cpout' || ext === 'cpl' || fileName.toLowerCase().includes('cpout')) {
+      const parsed = parseCPOUT(file.content);
+      mat.raw_max_x = Math.max(mat.raw_max_x, parsed.raw_max_x);
+      mat.raw_max_y = Math.max(mat.raw_max_y, parsed.raw_max_y);
+      mat.final_length = Math.max(mat.final_length, parsed.recommended_length);
+      mat.final_width = Math.max(mat.final_width, parsed.recommended_width);
+      mat.toolpathData = parsed;
+      
+      const sheetQty = parsed.sheet_count || 1;
+      for (let s = 0; s < sheetQty; s++) {
+        const sName = sheetQty > 1 ? `${file.name} (Sheet ${s + 1}/${sheetQty})` : file.name;
+        mat.sheets.push({
+          fileName: sName,
+          raw_max_x: parsed.raw_max_x,
+          raw_max_y: parsed.raw_max_y,
+          net_length: parsed.net_length,
+          net_width: parsed.net_width,
+          final_length: parsed.recommended_length,
+          final_width: parsed.recommended_width,
+          hasTrim: parsed.hasTrim,
+          ...getPrevSheetData(key, sName, mat.sheets.length)
+        });
+      }
+    } else if (ext === 'txt' || ext === 'pull') {
+      const parsed = parsePullSheet(file.content);
+      if (parsed && parsed.length > 0) {
+        // Find matching spray booth item for layup details
+        const sprayBoothItem = parsed.find(item => item.layup_required);
+        if (sprayBoothItem) {
+          mat.layup_required = 1;
+          mat.face_material = sprayBoothItem.stack_composition.face;
+          mat.core_substrate = sprayBoothItem.stack_composition.core;
+          mat.backer_material = sprayBoothItem.stack_composition.backer;
+          
+          // Normalize pull sheet dims if no toolpath overrides them
+          if (mat.final_length === 0) {
+            mat.final_length = sprayBoothItem.dimensions.length_in;
+          }
+          if (mat.final_width === 0) {
+            mat.final_width = sprayBoothItem.dimensions.width_in;
+          }
+        }
+        mat.pullSheetData = parsed;
+      }
+    }
+  });
+  
+  // Post-process sheets array and prune phantom empty materials
+  Object.keys(state.materials).forEach(key => {
+    const mat = state.materials[key];
+    const hasCncFiles = mat.files.some(f => {
+      if (f.isReintro) return false;
+      const ext = f.name.split('.').pop().toLowerCase();
+      return ['mpr', 'hop', 'cpout', 'cpl'].includes(ext) || f.name.toLowerCase().includes('cpout');
+    });
+    const hasPullData = mat.pullSheetData && mat.pullSheetData.length > 0;
+    
+    if (hasPullData) {
+      // Primary source of truth for raw nest stock bounds is the CncRun / Pull Sheet manifest
+      const sprayBoothItem = mat.pullSheetData.find(item => item.layup_required) || mat.pullSheetData[0];
+      if (sprayBoothItem && sprayBoothItem.dimensions) {
+        const bWidth = sprayBoothItem.dimensions.width_in || 85.0;
+        const bLength = sprayBoothItem.dimensions.length_in || 74.0;
+        
+        mat.raw_max_x = bWidth;
+        mat.raw_max_y = bLength;
+        mat.final_length = bWidth;
+        mat.final_width = bLength;
+        
+        // Ensure each sheet references raw stock bounds if unpopulated
+        mat.sheets.forEach(sheet => {
+          if (!sheet.raw_max_x || sheet.raw_max_x === 0) sheet.raw_max_x = bWidth;
+          if (!sheet.raw_max_y || sheet.raw_max_y === 0) sheet.raw_max_y = bLength;
+          if (!sheet.final_length || sheet.final_length === 0) sheet.final_length = bWidth;
+          if (!sheet.final_width || sheet.final_width === 0) sheet.final_width = bLength;
+        });
+      }
+    }
+
+    if (mat.sheets.length === 0 && !hasCncFiles && !hasPullData) {
+      delete state.materials[key];
+    } else if (mat.sheets.length === 0 && (hasCncFiles || hasPullData)) {
+      if (hasPullData) {
+        mat.pullSheetData.forEach((item, index) => {
+          mat.sheets.push({
+            fileName: item.material_name || `Pull Sheet Nest ${index + 1}`,
+            raw_max_x: item.dimensions.width_in || 96.0,
+            raw_max_y: item.dimensions.length_in || 48.0,
+            net_length: item.dimensions.width_in || 0,
+            net_width: item.dimensions.length_in || 0,
+            final_length: item.dimensions.width_in || 0,
+            final_width: item.dimensions.length_in || 0
+          });
+        });
+      }
+    }
+  });
+}
+
+// Display Scan Results with Collapsible Material Groups
+function displayScanResults() {
+  const resultsDiv = document.getElementById('scan-results');
+  const matList = document.getElementById('detected-materials');
+  const fileBody = document.getElementById('discovered-files-body');
+  
+  if (!resultsDiv || !matList || !fileBody) return;
+
+  resultsDiv.classList.remove('hidden');
+  matList.innerHTML = '';
+  fileBody.innerHTML = '';
+
+  const materialNames = Object.keys(state.materials);
+
+  materialNames.forEach((name) => {
+    const mat = state.materials[name];
+    const safeKey = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    // 1. Left List Item (Material Subfolders Identified)
+    const li = document.createElement('li');
+    li.className = 'material-item clickable-mat-item';
+    li.setAttribute('data-material-key', safeKey);
+    li.style.cursor = 'pointer';
+    li.style.userSelect = 'none';
+    li.title = 'Click to expand/collapse payload files for this material';
+    li.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="left-mat-chevron" style="display: inline-flex; transition: transform 0.2s ease; color: var(--text-muted);">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        </span>
+        <span style="font-weight: 600;">${name}</span>
+      </div>
+      <span class="material-tag">${mat.files.length} file${mat.files.length === 1 ? '' : 's'}</span>
+    `;
+
+    // Click event for left panel item
+    li.addEventListener('click', () => {
+      toggleMaterialGroup(safeKey);
+    });
+
+    matList.appendChild(li);
+
+    // 2. Right Table Group Header Row
+    const headerTr = document.createElement('tr');
+    headerTr.className = 'material-group-header-row collapsed';
+    headerTr.setAttribute('id', `mat-header-${safeKey}`);
+    headerTr.setAttribute('data-material-key', safeKey);
+    headerTr.style.cursor = 'pointer';
+    headerTr.style.userSelect = 'none';
+
+    headerTr.innerHTML = `
+      <td colspan="4" style="padding: 10px 14px; background: rgba(30, 41, 59, 0.75); border-bottom: 1px solid var(--border-color);">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span class="chevron-icon" style="display: inline-flex; transition: transform 0.2s ease; color: var(--primary);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </span>
+            <strong style="color: var(--text-primary); font-size: 13px;">${name}</strong>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span class="badge badge-secondary" style="font-size: 11px; padding: 2px 8px; font-weight: 600;">${mat.files.length} file${mat.files.length === 1 ? '' : 's'}</span>
+            <span class="mat-toggle-hint" style="font-size: 11px; color: var(--text-muted);">Click to expand</span>
+          </div>
+        </div>
+      </td>
+    `;
+
+    // Click event for table header row
+    headerTr.addEventListener('click', () => {
+      toggleMaterialGroup(safeKey);
+    });
+
+    fileBody.appendChild(headerTr);
+
+    // 3. Right Table File Rows (Hidden when collapsed by default)
+    mat.files.forEach(f => {
+      const ext = f.name.split('.').pop().toUpperCase();
+      const tr = document.createElement('tr');
+      tr.className = `material-file-row group-files-${safeKey} hidden`;
+      tr.style.background = 'rgba(15, 23, 42, 0.4)';
+
+      const statusBadge = f.isReintro 
+        ? `<span class="badge badge-warning" style="background: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.3);">Re-Intro (Excluded)</span>`
+        : `<span class="status-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> Parsed</span>`;
+
+      tr.innerHTML = `
+        <td style="padding-left: 32px; color: var(--text-muted); font-size: 12px;">${name}</td>
+        <td style="font-weight: 500; font-family: var(--font-mono, monospace); font-size: 12px;">${f.name}</td>
+        <td><span class="badge badge-${ext.toLowerCase()}">${ext}</span></td>
+        <td>${statusBadge}</td>
+      `;
+      fileBody.appendChild(tr);
+    });
+  });
+
+  updateExpandAllButtonState();
+}
+
+// Toggle expansion of a specific material group
+function toggleMaterialGroup(safeKey, forceState) {
+  const headerTr = document.getElementById(`mat-header-${safeKey}`);
+  const fileRows = document.querySelectorAll(`.group-files-${safeKey}`);
+  const leftItem = document.querySelector(`.clickable-mat-item[data-material-key="${safeKey}"]`);
+
+  if (!headerTr) return;
+
+  const isCurrentlyCollapsed = headerTr.classList.contains('collapsed');
+  const shouldExpand = forceState !== undefined ? forceState : isCurrentlyCollapsed;
+
+  const chevron = headerTr.querySelector('.chevron-icon');
+  const leftChevron = leftItem ? leftItem.querySelector('.left-mat-chevron') : null;
+  const hintText = headerTr.querySelector('.mat-toggle-hint');
+
+  if (shouldExpand) {
+    headerTr.classList.remove('collapsed');
+    headerTr.classList.add('expanded');
+    if (chevron) chevron.style.transform = 'rotate(90deg)';
+    if (leftChevron) leftChevron.style.transform = 'rotate(90deg)';
+    if (leftItem) {
+      leftItem.style.borderColor = 'var(--primary)';
+      leftItem.style.background = 'rgba(99, 102, 241, 0.12)';
+    }
+    if (hintText) hintText.textContent = 'Click to collapse';
+
+    fileRows.forEach(row => row.classList.remove('hidden'));
+
+    // Scroll group into view inside container if triggered from left panel
+    if (forceState === undefined) {
+      headerTr.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  } else {
+    headerTr.classList.remove('expanded');
+    headerTr.classList.add('collapsed');
+    if (chevron) chevron.style.transform = 'rotate(0deg)';
+    if (leftChevron) leftChevron.style.transform = 'rotate(0deg)';
+    if (leftItem) {
+      leftItem.style.borderColor = 'var(--border-color)';
+      leftItem.style.background = 'var(--bg-sidebar)';
+    }
+    if (hintText) hintText.textContent = 'Click to expand';
+
+    fileRows.forEach(row => row.classList.add('hidden'));
+  }
+
+  updateExpandAllButtonState();
+}
+
+// Toggle Expand All / Collapse All
+function toggleAllMaterialGroups() {
+  const allHeaders = document.querySelectorAll('.material-group-header-row');
+  if (allHeaders.length === 0) return;
+
+  const anyCollapsed = Array.from(allHeaders).some(h => h.classList.contains('collapsed'));
+  const targetState = anyCollapsed;
+
+  allHeaders.forEach(h => {
+    const key = h.getAttribute('data-material-key');
+    if (key) toggleMaterialGroup(key, targetState);
+  });
+}
+
+// Update Expand All button label and icon
+function updateExpandAllButtonState() {
+  const btn = document.getElementById('btn-toggle-all-materials');
+  if (!btn) return;
+
+  const allHeaders = document.querySelectorAll('.material-group-header-row');
+  if (allHeaders.length === 0) return;
+
+  const anyCollapsed = Array.from(allHeaders).some(h => h.classList.contains('collapsed'));
+  if (anyCollapsed) {
+    btn.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="7 13 12 18 17 13"></polyline><polyline points="7 6 12 11 17 6"></polyline></svg>
+      <span>Expand All</span>
+    `;
+  } else {
+    btn.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 11 12 6 7 11"></polyline><polyline points="17 18 12 13 7 18"></polyline></svg>
+      <span>Collapse All</span>
+    `;
+  }
+}
+
+// Build Layout / Laminate Routing Wizard Steps
+function buildWizard() {
+  const stepsContainer = document.getElementById('wizard-steps');
+  stepsContainer.innerHTML = '';
+  
+  Object.keys(state.materials).forEach(name => {
+    const mat = state.materials[name];
+    
+    const card = document.createElement('div');
+    card.className = 'wizard-card';
+    card.setAttribute('data-material', name);
+    
+    // Normalize core substrate state
+    if (!mat.core_substrate) {
+      const uName = name.toUpperCase();
+      if (uName.includes('BMCP')) mat.core_substrate = 'BMCP';
+      else if (uName.includes('WMCP')) mat.core_substrate = 'WMCP';
+      else if (uName.includes('SOLID SURFACE') || /\bSS\b/i.test(name) || uName.endsWith(' SS') || uName.includes(' SS')) mat.core_substrate = 'Solid Surface';
+      else if (uName.includes('PB')) mat.core_substrate = 'PB';
+      else if (uName.includes('MDF')) mat.core_substrate = 'MDF';
+      else if (uName.includes('PLY') || uName.includes('WOOD')) mat.core_substrate = 'Ply';
+      else mat.core_substrate = 'PB';
+    }
+
+    // Auto-default Solid Surface to Raw Material (No Layup)
+    const isSolidSurface = mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS';
+    if (isSolidSurface) {
+      mat.layup_required = 0;
+    }
+    
+    const isRaw = mat.layup_required === 0;
+    
+    card.innerHTML = `
+      <div class="wizard-card-header" style="display: flex; justify-content: space-between; align-items: flex-start;">
+        <div class="wizard-card-title">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h4 class="material-card-name">${name}</h4>
+            <button class="btn-rename-material" title="Rename material card" style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 4px; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+              </svg>
+            </button>
+          </div>
+          <p>Target Machine: <strong style="color: var(--secondary);">${mat.machine_type}</strong></p>
+        </div>
+        <button class="btn-delete-material" title="Delete material card from memory" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 6px; border-radius: 6px; transition: all 0.2s ease; display: flex; align-items: center; justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            <line x1="10" y1="11" x2="10" y2="17"></line>
+            <line x1="14" y1="11" x2="14" y2="17"></line>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="layup-fields">
+        <div class="form-row-grid" style="grid-template-columns: 1fr 1fr 1fr auto; gap: 16px; align-items: end;">
+          <div class="form-group">
+            <label>Core Substrate</label>
+            <select class="input-core">
+              <option value="PB" ${mat.core_substrate === 'PB' ? 'selected' : ''}>Particle Board (PB)</option>
+              <option value="MDF" ${mat.core_substrate === 'MDF' ? 'selected' : ''}>MDF</option>
+              <option value="Ply" ${mat.core_substrate === 'Ply' || mat.core_substrate === 'Plywood' ? 'selected' : ''}>Plywood (Ply)</option>
+              <option value="BMCP" ${mat.core_substrate === 'BMCP' ? 'selected' : ''}>BMCP (Black MCP)</option>
+              <option value="WMCP" ${mat.core_substrate === 'WMCP' ? 'selected' : ''}>WMCP (White MCP)</option>
+              <option value="Solid Surface" ${mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS' ? 'selected' : ''}>Solid Surface (SS)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Thickness (in)</label>
+            <input type="number" step="0.001" min="0" class="input-thickness" value="${mat.thickness}">
+          </div>
+          <div class="form-group">
+            <label>Grain Direction</label>
+            <select class="input-grain">
+              <option value="Horizontal" ${mat.grain_direction === 'Horizontal' ? 'selected' : ''}>Horizontal</option>
+              <option value="Vertical" ${mat.grain_direction === 'Vertical' ? 'selected' : ''}>Vertical</option>
+              <option value="No Grain" ${mat.grain_direction === 'No Grain' ? 'selected' : ''}>No Grain</option>
+            </select>
+          </div>
+          <div class="form-group checkbox-group" style="padding-bottom: 8px; flex-direction: column; gap: 8px; align-items: flex-start;">
+            <label class="checkbox-label" ${isSolidSurface ? 'style="opacity: 0.75; cursor: not-allowed;" title="Solid Surface materials do not require layup"' : ''}>
+              <input type="checkbox" class="input-raw-material" ${isRaw ? 'checked' : ''} ${isSolidSurface ? 'disabled' : ''}>
+              <span>Raw Material (No Lay-Up)</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" class="input-use-whole-sheets" ${mat.use_whole_sheets ? 'checked' : ''}>
+              <span>Use Whole Sheets</span>
+            </label>
+          </div>
+        </div>
+        
+        <div class="form-row-grid">
+          <div class="form-group">
+            <label>Face Up Veneer/Laminate</label>
+            <input type="text" class="input-face" placeholder="Face Up Veneer/Laminate" value="${mat.face_material || ''}" ${isRaw || isSolidSurface ? 'disabled' : ''}>
+          </div>
+          <div class="form-group">
+            <label>Face Down Veneer/Laminate</label>
+            <input type="text" class="input-backer" placeholder="Face Down Veneer/Laminate" value="${mat.backer_material || ''}" ${isRaw || isSolidSurface ? 'disabled' : ''}>
+          </div>
+        </div>
+        
+        <div class="layup-dimensions-badge" style="flex-direction: column; align-items: stretch; gap: 8px;">
+          ${renderCardDimensionsBadge(mat)}
+        </div>
+      </div>
+    `;
+    
+    // Select elements
+    const rawCheckbox = card.querySelector('.input-raw-material');
+    const wholeSheetsCheckbox = card.querySelector('.input-use-whole-sheets');
+    const faceInput = card.querySelector('.input-face');
+    const backerInput = card.querySelector('.input-backer');
+    const coreSelect = card.querySelector('.input-core');
+    const thicknessInput = card.querySelector('.input-thickness');
+    const grainSelect = card.querySelector('.input-grain');
+    
+    // Add raw checkbox event
+    rawCheckbox.addEventListener('change', (e) => {
+      if (mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS') {
+        e.target.checked = true;
+        return;
+      }
+      const isChecked = e.target.checked;
+      mat.layup_required = isChecked ? 0 : 1;
+      
+      if (isChecked) {
+        faceInput.disabled = true;
+        backerInput.disabled = true;
+      } else {
+        faceInput.disabled = false;
+        backerInput.disabled = false;
+      }
+      updateDatabasePreview();
+      saveSessionCache();
+    });
+
+    wholeSheetsCheckbox.addEventListener('change', (e) => {
+      mat.use_whole_sheets = e.target.checked ? 1 : 0;
+      const badge = card.querySelector('.layup-dimensions-badge');
+      if (badge) badge.innerHTML = renderCardDimensionsBadge(mat);
+      updateDatabasePreview();
+      saveSessionCache();
+    });
+    
+    // Input syncs
+    faceInput.addEventListener('input', e => {
+      mat.face_material = e.target.value;
+      updateDatabasePreview();
+      saveSessionCache();
+    });
+    
+    backerInput.addEventListener('input', e => {
+      mat.backer_material = e.target.value;
+      updateDatabasePreview();
+      saveSessionCache();
+    });
+    
+    coreSelect.addEventListener('change', e => {
+      mat.core_substrate = e.target.value;
+      const isSS = mat.core_substrate === 'Solid Surface' || mat.core_substrate === 'SS';
+      if (isSS) {
+        mat.layup_required = 0;
+        rawCheckbox.checked = true;
+        rawCheckbox.disabled = true;
+        rawCheckbox.parentElement.style.opacity = '0.75';
+        rawCheckbox.parentElement.style.cursor = 'not-allowed';
+        rawCheckbox.parentElement.title = 'Solid Surface materials do not require layup';
+        faceInput.disabled = true;
+        backerInput.disabled = true;
+      } else {
+        rawCheckbox.disabled = false;
+        rawCheckbox.parentElement.style.opacity = '1';
+        rawCheckbox.parentElement.style.cursor = 'pointer';
+        rawCheckbox.parentElement.title = '';
+        if (rawCheckbox.checked) {
+          faceInput.disabled = true;
+          backerInput.disabled = true;
+        } else {
+          faceInput.disabled = false;
+          backerInput.disabled = false;
+        }
+      }
+      updateDatabasePreview();
+      saveSessionCache();
+      renderPullSheetReport();
+    });
+
+    thicknessInput.addEventListener('input', e => {
+      const val = parseFloat(e.target.value);
+      mat.thickness = isNaN(val) ? 0 : val;
+      updateDatabasePreview();
+      saveSessionCache();
+    });
+    
+    grainSelect.addEventListener('change', e => {
+      mat.grain_direction = e.target.value;
+      updateDatabasePreview();
+      saveSessionCache();
+    });
+
+    const renameBtn = card.querySelector('.btn-rename-material');
+    if (renameBtn) {
+      renameBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const newName = prompt(`Rename material card "${name}":`, name);
+        if (newName !== null && newName.trim() !== '' && newName.trim() !== name) {
+          const trimmedName = newName.trim();
+          
+          const matData = state.materials[name];
+          matData.name = trimmedName;
+          matData.key = trimmedName;
+          
+          const newThickness = parseThicknessFromName(trimmedName);
+          if (newThickness !== 0.75 || matData.thickness === 0.75) {
+            matData.thickness = newThickness;
+          }
+
+          state.materials[trimmedName] = matData;
+          delete state.materials[name];
+
+          displayScanResults();
+          buildWizard();
+          updateDatabasePreview();
+          renderPullSheetReport();
+          saveSessionCache();
+
+          showToast('Material Renamed', `Renamed "${name}" to "${trimmedName}".`, 'success');
+        }
+      });
+    }
+
+    const deleteBtn = card.querySelector('.btn-delete-material');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Are you sure you want to delete "${name}" from memory and pull sheet listings?`)) {
+          delete state.materials[name];
+          displayScanResults();
+          buildWizard();
+          updateDatabasePreview();
+          renderPullSheetReport();
+          saveSessionCache();
+          showToast('Material Deleted', `"${name}" removed from project memory.`, 'info');
+        }
+      });
+    }
+
+    card.addEventListener('click', (e) => {
+      const editBtn = e.target.closest('.btn-edit-sheet-size');
+      if (editBtn) {
+        e.stopPropagation();
+        const sheetIdx = parseInt(editBtn.dataset.sheetIdx, 10);
+        const sheet = mat.sheets[sheetIdx];
+        if (!sheet) return;
+
+        const rawX = sheet.raw_max_x || mat.raw_max_x || 96.0;
+        const rawY = sheet.raw_max_y || mat.raw_max_y || 48.0;
+
+        const calcFinX = calculateFinalDimension(sheet.net_length, rawX);
+        const calcFinY = calculateFinalDimension(sheet.net_width, rawY);
+
+        const currentFinX = (sheet.manual_final_length !== undefined) ? sheet.manual_final_length : ((sheet.final_length && sheet.final_length < rawX) ? sheet.final_length : (calcFinX > 0 ? calcFinX : rawX));
+        const currentFinY = (sheet.manual_final_width !== undefined) ? sheet.manual_final_width : ((sheet.final_width && sheet.final_width < rawY) ? sheet.final_width : (calcFinY > 0 ? calcFinY : rawY));
+
+        const promptVal = prompt(`Enter manual sheet dimensions for Sheet ${sheetIdx + 1} in inches (Width x Length, e.g. 61.0 x 121.0):`, `${currentFinX.toFixed(1)} x ${currentFinY.toFixed(1)}`);
+        if (promptVal !== null) {
+          const matches = promptVal.match(/[-+]?[0-9]*\.?[0-9]+/g);
+          if (matches && matches.length >= 2) {
+            const newX = parseFloat(matches[0]);
+            const newY = parseFloat(matches[1]);
+            if (!isNaN(newX) && !isNaN(newY) && newX > 0 && newY > 0) {
+              sheet.is_modified = true;
+              sheet.manual_final_length = newX;
+              sheet.manual_final_width = newY;
+
+              const badge = card.querySelector('.layup-dimensions-badge');
+              if (badge) badge.innerHTML = renderCardDimensionsBadge(mat);
+
+              updateDatabasePreview();
+              renderPullSheetReport();
+              saveSessionCache();
+              showToast('Sheet Size Updated', `Sheet ${sheetIdx + 1} size set to ${newX.toFixed(1)}" x ${newY.toFixed(1)}".`, 'success');
+            } else {
+              showToast('Invalid Dimensions', 'Dimensions must be positive numbers.', 'warning');
+            }
+          } else {
+            showToast('Invalid Format', 'Please enter dimensions as Width x Length (e.g. 61.0 x 121.0).', 'warning');
+          }
+        }
+        return;
+      }
+
+      const resetBtn = e.target.closest('.btn-reset-sheet-size');
+      if (resetBtn) {
+        e.stopPropagation();
+        const sheetIdx = parseInt(resetBtn.dataset.sheetIdx, 10);
+        const sheet = mat.sheets[sheetIdx];
+        if (!sheet) return;
+
+        delete sheet.is_modified;
+        delete sheet.manual_final_length;
+        delete sheet.manual_final_width;
+
+        const badge = card.querySelector('.layup-dimensions-badge');
+        if (badge) badge.innerHTML = renderCardDimensionsBadge(mat);
+
+        updateDatabasePreview();
+        renderPullSheetReport();
+        saveSessionCache();
+        showToast('Sheet Size Reverted', `Sheet ${sheetIdx + 1} reverted to automated sizing.`, 'info');
+        return;
+      }
+
+      const layupBtn = e.target.closest('.btn-custom-layup');
+      if (layupBtn) {
+        e.stopPropagation();
+        const sheetIdx = parseInt(layupBtn.dataset.sheetIdx, 10);
+        openLayupWizard(mat.key, sheetIdx);
+        return;
+      }
+    });
+    
+    stepsContainer.appendChild(card);
+  });
+}
+
+// Helper to render wizard card dimensions badge
+function renderCardDimensionsBadge(mat) {
+  const isWhole = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
+
+  return `
+    <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed var(--border-color); padding-bottom: 8px; margin-bottom: 4px;">
+      <span>Sheet Quantity:</span>
+      <strong>${mat.sheets.length} sheet${mat.sheets.length > 1 ? 's' : ''}</strong>
+    </div>
+    ${mat.sheets.map((sheet, idx) => {
+      const rawX = sheet.raw_max_x || mat.raw_max_x || 96.0;
+      const rawY = sheet.raw_max_y || mat.raw_max_y || 48.0;
+
+      // Calculate authentic recommended cropped offcut dimension from toolpath net span + clearance
+      const calcFinX = calculateFinalDimension(sheet.net_length, rawX);
+      const calcFinY = calculateFinalDimension(sheet.net_width, rawY);
+
+      let finX, finY, tagText;
+      if (sheet.is_modified) {
+        finX = sheet.manual_final_length !== undefined ? sheet.manual_final_length : (sheet.final_length || rawX);
+        finY = sheet.manual_final_width !== undefined ? sheet.manual_final_width : (sheet.final_width || rawY);
+        tagText = '(Modified)';
+      } else if (isWhole) {
+        finX = rawX;
+        finY = rawY;
+        tagText = '(Whole Sheet)';
+      } else {
+        finX = (sheet.final_length && sheet.final_length < rawX) ? sheet.final_length : (calcFinX > 0 ? calcFinX : rawX);
+        finY = (sheet.final_width && sheet.final_width < rawY) ? sheet.final_width : (calcFinY > 0 ? calcFinY : rawY);
+        tagText = '';
+      }
+
+      const trimStatusHtml = (sheet.hasTrim !== false)
+        ? `<span style="margin-left: 8px; font-size: 11px; opacity: 0.9;">Trim? <span style="color: #22c55e; font-weight: bold; font-size: 13px;">✓</span></span>`
+        : `<span style="margin-left: 8px; font-size: 11px; opacity: 0.9;">Trim? <span style="color: #ef4444; font-weight: bold; font-size: 13px;">✕</span></span>`;
+
+      const actionBtnHtml = sheet.is_modified
+        ? `<button class="btn-reset-sheet-size" data-mat-key="${mat.key}" data-sheet-idx="${idx}" title="Revert to automated sizing">✕</button>`
+        : `<button class="btn-edit-sheet-size" data-mat-key="${mat.key}" data-sheet-idx="${idx}" title="Manually edit sheet size">
+             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+             </svg>
+           </button>`;
+
+      const hasCustom = !!sheet.custom_layup;
+      const customLayupBtnHtml = `
+        <button class="btn-custom-layup ${hasCustom ? 'has-custom' : ''}" data-mat-key="${mat.key}" data-sheet-idx="${idx}" title="${hasCustom ? 'Edit Custom Lay-Up Diagram' : 'Open Custom Lay-Up Wizard'}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="12" y1="3" x2="12" y2="21" stroke-dasharray="3 3"></line>
+          </svg>
+          <span>${hasCustom ? 'Custom Lay-Up ✓' : 'Custom Lay-Up'}</span>
+        </button>
+      `;
+
+      return `
+        <div class="sheet-dimension-item" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); align-items: center;">
+          <span>Sheet ${idx + 1} (${sheet.fileName || 'Nest'}): ${trimStatusHtml}</span>
+          <span>Raw: <strong>${rawX.toFixed(1)}" x ${rawY.toFixed(1)}"</strong> | Final: <strong>${finX.toFixed(1)}" x ${finY.toFixed(1)}"${tagText ? ' ' + tagText : ''}</strong>${actionBtnHtml}${customLayupBtnHtml}</span>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+
+// Helper to get consolidated material summary rows (consolidates identical sheet parameters and calculates quantity)
+function getConsolidatedMaterialRows() {
+  const rows = [];
+  if (!state.materials) return rows;
+  
+  Object.keys(state.materials).forEach(key => {
+    const mat = state.materials[key];
+    const isLayUp = mat.layup_required === 1;
+    const isWholeSheets = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
+    const groupMap = {};
+    
+    const sheetsList = (mat.sheets && mat.sheets.length > 0) ? mat.sheets : [{
+      fileName: 'Default Sheet',
+      raw_max_x: mat.raw_max_x || 96.0,
+      raw_max_y: mat.raw_max_y || 48.0,
+      net_length: mat.final_length || 0,
+      net_width: mat.final_width || 0,
+      final_length: mat.final_length || 0,
+      final_width: mat.final_width || 0
+    }];
+    
+    sheetsList.forEach(s => {
+      const rx = s.raw_max_x || mat.raw_max_x || 96.0;
+      const ry = s.raw_max_y || mat.raw_max_y || 48.0;
+
+      const calcFinX = calculateFinalDimension(s.net_length, rx);
+      const calcFinY = calculateFinalDimension(s.net_width, ry);
+
+      let fLen, fWid;
+      if (s.is_modified) {
+        fLen = s.manual_final_length !== undefined ? s.manual_final_length : (s.final_length || rx);
+        fWid = s.manual_final_width !== undefined ? s.manual_final_width : (s.final_width || ry);
+      } else if (isWholeSheets) {
+        fLen = rx;
+        fWid = ry;
+      } else {
+        fLen = (s.final_length && s.final_length < rx) ? s.final_length : (calcFinX > 0 ? calcFinX : rx);
+        fWid = (s.final_width && s.final_width < ry) ? s.final_width : (calcFinY > 0 ? calcFinY : ry);
+      }
+
+      const thick = mat.thickness !== undefined ? mat.thickness : 0.75;
+      const grain = mat.grain_direction || 'Horizontal';
+      const faceMat = isLayUp ? (mat.face_material || '') : '';
+      const backerMat = isLayUp ? (mat.backer_material || '') : '';
+      const coreMat = mat.core_substrate || '';
+      const customSig = s.custom_layup ? JSON.stringify(s.custom_layup) : '';
+      
+      const sig = `${mat.name}|${mat.machine_type}|${mat.layup_required}|${faceMat}|${coreMat}|${backerMat}|${thick}|${grain}|${fLen}|${fWid}|${rx}|${ry}|${isWholeSheets ? 1 : 0}|${customSig}`;
+      
+      if (!groupMap[sig]) {
+        groupMap[sig] = {
+          material_name: mat.name,
+          machine_type: mat.machine_type,
+          quantity: 0,
+          layup_required: mat.layup_required,
+          faceUp_matl: faceMat,
+          core_substrate: coreMat,
+          faceDown_matl: backerMat,
+          thickness: thick,
+          grain_direction: grain,
+          final_length: fLen,
+          final_width: fWid,
+          raw_max_x: rx,
+          raw_max_y: ry,
+          use_whole_sheets: isWholeSheets ? 1 : 0,
+          custom_layup: s.custom_layup || null,
+          fileName: s.fileName || ''
+        };
+      }
+      groupMap[sig].quantity += 1;
+    });
+    
+    Object.values(groupMap).forEach(r => rows.push(r));
+  });
+  
+  return rows;
+}
+
+// Update Database Preview Tables
+function updateDatabasePreview() {
+  const metaRows = document.getElementById('db-metadata-rows');
+  const summaryRows = document.getElementById('db-summary-rows');
+  
+  metaRows.innerHTML = `
+    <tr>
+      <td>${state.metadata.jobNumber || '<span class="text-muted">None</span>'}</td>
+      <td>${state.metadata.client || '<span class="text-muted">None</span>'}</td>
+      <td>${state.metadata.projectName || '<span class="text-muted">None</span>'}</td>
+      <td>${state.metadata.dateProcessed || '<span class="text-muted">None</span>'}</td>
+      <td>${state.metadata.operatorName || '<span class="text-muted">None</span>'}</td>
+    </tr>
+  `;
+  
+  summaryRows.innerHTML = '';
+  const rows = getConsolidatedMaterialRows();
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    const isLayUp = row.layup_required === 1;
+    
+    tr.innerHTML = `
+      <td><strong>${row.material_name}</strong></td>
+      <td>${row.machine_type}</td>
+      <td><span class="badge" style="background-color: var(--primary); color: #fff;">${row.quantity}</span></td>
+      <td><span class="badge" style="background-color: ${isLayUp ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 255, 255, 0.05)'}; color: ${isLayUp ? 'var(--success)' : 'var(--text-muted)'};">${isLayUp ? 'TRUE' : 'FALSE'}</span></td>
+      <td>${isLayUp ? (row.faceUp_matl || '<em>empty</em>') : '<span class="text-muted">NULL</span>'}</td>
+      <td>${row.core_substrate || '<em>empty</em>'}</td>
+      <td>${isLayUp ? (row.faceDown_matl || '<em>empty</em>') : '<span class="text-muted">NULL</span>'}</td>
+      <td>${row.thickness.toFixed(3)}"</td>
+      <td>${row.grain_direction}</td>
+      <td>${row.final_length.toFixed(2)}</td>
+      <td>${row.final_width.toFixed(2)}</td>
+      <td>${row.raw_max_x.toFixed(2)}</td>
+      <td>${row.raw_max_y.toFixed(2)}</td>
+    `;
+    summaryRows.appendChild(tr);
+  });
+}
+
+// Compile SQLite DB file using SQL.js WASM and push to server
+async function handleExportSqlite() {
+  if (!state.SQL) {
+    showToast('SQLite Compile Error', 'SQL.js engine is not ready.', 'error');
+    return;
+  }
+  
+  if (!state.metadata.jobNumber) {
+    showToast('Validation Error', 'Job Number is required.', 'warning');
+    return;
+  }
+  
+  try {
+    const db = new state.SQL.Database();
+    
+    // Create Table 1
+    db.run(`
+      CREATE TABLE project_metadata (
+        job_number TEXT PRIMARY KEY,
+        client TEXT,
+        project_name TEXT,
+        date_processed TEXT,
+        operator_name TEXT
+      );
+    `);
+    
+    // Create Table 2
+    db.run(`
+      CREATE TABLE material_summary (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        material_name TEXT,
+        machine_type TEXT,
+        quantity INTEGER,
+        layup_required INTEGER,
+        faceUp_matl TEXT,
+        core_substrate TEXT,
+        faceDown_matl TEXT,
+        thickness REAL,
+        grain_direction TEXT,
+        final_length REAL,
+        final_width REAL,
+        raw_max_x REAL,
+        raw_max_y REAL
+      );
+    `);
+    
+    // Insert Table 1 Row
+    const insertMeta = db.prepare(`
+      INSERT INTO project_metadata (job_number, client, project_name, date_processed, operator_name)
+      VALUES (?, ?, ?, ?, ?);
+    `);
+    insertMeta.run([
+      state.metadata.jobNumber,
+      state.metadata.client || '',
+      state.metadata.projectName || '',
+      state.metadata.dateProcessed || '',
+      state.metadata.operatorName || ''
+    ]);
+    insertMeta.free();
+    
+    // Insert Table 2 Rows
+    const insertMat = db.prepare(`
+      INSERT INTO material_summary (
+        material_name, machine_type, quantity, layup_required, faceUp_matl, core_substrate, faceDown_matl,
+        thickness, grain_direction, final_length, final_width, raw_max_x, raw_max_y
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    
+    const summaryRows = getConsolidatedMaterialRows();
+    summaryRows.forEach(r => {
+      insertMat.run([
+        r.material_name,
+        r.machine_type,
+        r.quantity,
+        r.layup_required,
+        r.faceUp_matl || null,
+        r.core_substrate || null,
+        r.faceDown_matl || null,
+        r.thickness,
+        r.grain_direction,
+        r.final_length,
+        r.final_width,
+        r.raw_max_x,
+        r.raw_max_y
+      ]);
+    });
+    insertMat.free();
+    
+    // Export database binary array
+    const binaryArray = db.export();
+    
+    const exportBtn = document.getElementById('btn-export-sqlite');
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'Writing Database file...';
+    
+    if (state.directoryHandle) {
+      // Write database directly to local folder via File System Access API
+      const fileHandle = await state.directoryHandle.getFileHandle('project_data.db', { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(binaryArray);
+      await writable.close();
+      
+      showToast('Database Written', 'project_data.db successfully written directly to directory.', 'success');
+      exportBtn.disabled = false;
+    } else if (isServerConnected) {
+      // Convert Uint8Array to base64 to send via companion server JSON
+      const base64Data = uint8ArrayToBase64(binaryArray);
+      
+      const res = await fetch(`${companionApiBase}/api/save-database`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetPath: state.pastedPath,
+          dbBase64: base64Data
+        })
+      });
+      
+      if (res.ok) {
+        showToast('Database Written', 'project_data.db successfully written to directory.', 'success');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || 'Write failed');
+      }
+      
+      exportBtn.disabled = false;
+    } else {
+      // Standalone browser download fallback
+      const blob = new Blob([binaryArray], { type: 'application/x-sqlite3' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'project_data.db';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 200);
+      showToast('Database Downloaded', 'project_data.db downloaded to your computer.', 'success');
+      exportBtn.disabled = false;
+    }
+    
+    exportBtn.innerHTML = `
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+      Write project_data.db to target directory
+    `;
+    
+  } catch (e) {
+    showToast('Database Write Failed', e.message || 'Check permissions or directory path.', 'error');
+  }
+}
+
+// Convert Uint8Array to base64 string
+function uint8ArrayToBase64(arr) {
+  let binary = '';
+  const len = arr.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(arr[i]);
+  }
+  return window.btoa(binary);
+}
+
+// Helper to calculate final part dimension with shop clearance, rounding, and offcut rules
+function calculateFinalDimension(netDim, rawMaxDim) {
+  if (netDim <= 0) return 0;
+  
+  const overcutVal = state.settings ? state.settings.overcutOverage : 2.0;
+  const offcutVal = state.settings ? state.settings.minOffcutDim : 6.0;
+  
+  // Calculate size with shop clearance added
+  let recommended = netDim + overcutVal;
+  
+  // Always round up to nearest inch if not exactly .00
+  const decimal = recommended % 1;
+  if (decimal > 0.001) {
+    recommended = Math.ceil(recommended);
+  } else {
+    recommended = Math.round(recommended);
+  }
+  
+  // If within minOffcutDim of overall sheet dims, use full sheet size (no offcut)
+  if (rawMaxDim - recommended <= offcutVal) {
+    recommended = rawMaxDim;
+  }
+  
+  // Enforce raw material limits as absolute ceilings
+  if (recommended > rawMaxDim) {
+    recommended = rawMaxDim;
+  }
+  
+  return recommended;
+}
+
+// ==========================================
+// Parsing Logic Implementation
+// ==========================================
+
+// Homag / Weeke Router (*.mpr) Parser
+function parseMPR(content) {
+  let raw_max_x = 0;
+  let raw_max_y = 0;
+  const xaCoords = [];
+  const yaCoords = [];
+  const allXCoords = [];
+  const allYCoords = [];
+  
+  const lines = content.split(/\r?\n/);
+  
+  // Locate [001 header and parse l (length) and w (width)
+  let inHeader = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line === '[001') {
+      inHeader = true;
+      continue;
+    }
+    if (inHeader && line.startsWith('[')) {
+      inHeader = false; // Exited block
+    }
+    if (inHeader) {
+      const matchL = line.match(/^l\s*=\s*"([\d.-]+)"/i);
+      const matchW = line.match(/^w\s*=\s*"([\d.-]+)"/i);
+      if (matchL) raw_max_y = parseFloat(matchL[1]) / 25.4; // Board Length
+      if (matchW) raw_max_x = parseFloat(matchW[1]) / 25.4; // Board Width
+    }
+    
+    // Parse absolute operation placement coordinates XA=, YA=
+    const matchXA = line.match(/^\s*XA\s*=\s*"*([\d.-]+)"*/i);
+    const matchYA = line.match(/^\s*YA\s*=\s*"*([\d.-]+)"*/i);
+    if (matchXA) xaCoords.push(parseFloat(matchXA[1]) / 25.4);
+    if (matchYA) yaCoords.push(parseFloat(matchYA[1]) / 25.4);
+  }
+  
+  // Track contour macro bounding boxes (ignore small notch/groove sub-loops < 1")
+  let curBlockX = [];
+  let curBlockY = [];
+  const partMinXList = [];
+  const partMaxXList = [];
+  const partMinYList = [];
+  const partMaxYList = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const matchX = line.match(/^\s*(?:\.X|X)\s*=\s*"*([\d.-]+)"*/i);
+    const matchY = line.match(/^\s*(?:\.Y|Y)\s*=\s*"*([\d.-]+)"*/i);
+    if (matchX) {
+      const vx = parseFloat(matchX[1]) / 25.4;
+      curBlockX.push(vx);
+      allXCoords.push(vx);
+    }
+    if (matchY) {
+      const vy = parseFloat(matchY[1]) / 25.4;
+      curBlockY.push(vy);
+      allYCoords.push(vy);
+    }
+
+    if (line.startsWith('<') || i === lines.length - 1) {
+      if (curBlockX.length > 0 && curBlockY.length > 0) {
+        const vx = curBlockX.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+        const vy = curBlockY.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
+        if (vx.length > 0 && vy.length > 0) {
+          const cMinX = Math.min(...vx);
+          const cMaxX = Math.max(...vx);
+          const cMinY = Math.min(...vy);
+          const cMaxY = Math.max(...vy);
+          const spanX = cMaxX - cMinX;
+          const spanY = cMaxY - cMinY;
+          // Only include major part contours (span > 1.0"), ignoring tiny notch sub-loops
+          if (spanX > 1.0 && spanY > 1.0) {
+            partMinXList.push(cMinX);
+            partMaxXList.push(cMaxX);
+            partMinYList.push(cMinY);
+            partMaxYList.push(cMaxY);
+          }
+        }
+        curBlockX = [];
+        curBlockY = [];
+      }
+    }
+  }
+
+  const validAllX = allXCoords.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+  const validAllY = allYCoords.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
+  const net_x = validAllX.length > 0 ? Math.max(...validAllX) - Math.min(...validAllX) : 0;
+  const net_y = validAllY.length > 0 ? Math.max(...validAllY) - Math.min(...validAllY) : 0;
+
+  const minX = partMinXList.length > 0 ? Math.min(...partMinXList) : (validAllX.length > 0 ? Math.min(...validAllX) : 0);
+  const maxX = partMaxXList.length > 0 ? Math.max(...partMaxXList) : (validAllX.length > 0 ? Math.max(...validAllX) : 0);
+  const minY = partMinYList.length > 0 ? Math.min(...partMinYList) : (validAllY.length > 0 ? Math.min(...validAllY) : 0);
+  const maxY = partMaxYList.length > 0 ? Math.max(...partMaxYList) : (validAllY.length > 0 ? Math.max(...validAllY) : 0);
+
+  const recWidth = calculateFinalDimension(net_y, raw_max_x);
+  const recLength = calculateFinalDimension(net_x, raw_max_y);
+
+  // Ensure space from cut parts to all 4 edges of raw board is > 0"
+  let hasTrim = minX > 0.01 && minY > 0.01 && (raw_max_y - maxX) > 0.01 && (raw_max_x - maxY) > 0.01;
+
+  // Also check absolute drilling operations XA/YA if present
+  if (xaCoords.length > 0 && yaCoords.length > 0) {
+    const validXa = xaCoords.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+    const validYa = yaCoords.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
+    if (validXa.length > 0 && validYa.length > 0) {
+      const minXa = Math.min(...validXa);
+      const maxXa = Math.max(...validXa);
+      const minYa = Math.min(...validYa);
+      const maxYa = Math.max(...validYa);
+      const drlTrim = minXa > 0.01 && minYa > 0.01 && (raw_max_y - maxXa) > 0.01 && (raw_max_x - maxYa) > 0.01;
+      hasTrim = hasTrim && drlTrim;
+    }
+  }
+
+  return {
+    raw_max_x, // Board Width (Dimension 1)
+    raw_max_y, // Board Length (Dimension 2)
+    net_length: net_y, // UI maps this to calcFinX (Width)
+    net_width: net_x,  // UI maps this to calcFinY (Length)
+    recommended_length: recWidth, // UI maps this to finX (Width)
+    recommended_width: recLength, // UI maps this to finY (Length)
+    hasTrim
+  };
+}
+
+// Holzher Dynestic Router (*.hop) Parser
+function parseHOP(content) {
+  let raw_max_y = 0; // Length (DX)
+  let raw_max_x = 0; // Width (DY)
+  const xCoords = []; // Length axis
+  const yCoords = []; // Width axis
+  
+  const lines = content.split(/\r?\n/);
+  
+  let isAfterStart = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // Extract sheet dimensions (DX = Length, DY = Width) inside VARS
+    const matchDX = line.match(/\bDX\s*:=\s*([\d.-]+)/i);
+    const matchDY = line.match(/\bDY\s*:=\s*([\d.-]+)/i);
+    if (matchDX) raw_max_y = parseFloat(matchDX[1]); // Board Length
+    if (matchDY) raw_max_x = parseFloat(matchDY[1]); // Board Width
+    
+    if (line === 'START') {
+      isAfterStart = true;
+      continue;
+    }
+    
+    // Scan geometry coordinates after START
+    if (isAfterStart) {
+      const matchGeo = line.match(/^(DRILLING|SP|G01|G02R)\s*\(\s*([\d.-]+)\s*,\s*([\d.-]+)/i);
+      if (matchGeo) {
+        xCoords.push(parseFloat(matchGeo[2]));
+        yCoords.push(parseFloat(matchGeo[3]));
+      }
+    }
+  }
+  
+  // Filter out off-board lead-in / lead-out / trimming pass coordinates (< 0 or > raw_max)
+  const validX = xCoords.filter(x => x >= -0.001 && (raw_max_y === 0 || x <= raw_max_y + 0.001));
+  const validY = yCoords.filter(y => y >= -0.001 && (raw_max_x === 0 || y <= raw_max_x + 0.001));
+  
+  const net_x = validX.length > 0 ? Math.max(...validX) - Math.min(...validX) : 0; // Along Length
+  const net_y = validY.length > 0 ? Math.max(...validY) - Math.min(...validY) : 0; // Along Width
+  
+  const minX = validX.length > 0 ? Math.min(...validX) : 0;
+  const maxX = validX.length > 0 ? Math.max(...validX) : 0;
+  const minY = validY.length > 0 ? Math.min(...validY) : 0;
+  const maxY = validY.length > 0 ? Math.max(...validY) : 0;
+  
+  const recWidth = calculateFinalDimension(net_y, raw_max_x); // Final cropped Width
+  const recLength = calculateFinalDimension(net_x, raw_max_y); // Final cropped Length
+  
+  // Ensure space from cut parts to all 4 edges of raw board is > 0"
+  const hasTrim = validX.length > 0 && validY.length > 0 &&
+                  minX > 0.01 && minY > 0.01 &&
+                  (raw_max_y - maxX) > 0.01 && (raw_max_x - maxY) > 0.01;
+  
+  return {
+    raw_max_x, // Board Width (Dimension 1)
+    raw_max_y, // Board Length (Dimension 2)
+    net_length: net_y, // UI maps this to calcFinX (Width)
+    net_width: net_x,  // UI maps this to calcFinY (Length)
+    recommended_length: recWidth, // UI maps this to finX (Width)
+    recommended_width: recLength,  // UI maps this to finY (Length)
+    hasTrim
+  };
+}
+
+// Holzher Beam Saw (*.cpout / *.cpl) Parser
+function parseCPOUT(content) {
+  let raw_max_y = 0; // Length
+  let raw_max_x = 0; // Width
+  let sheet_count = 1;
+  let invTrim1 = 0, invTrim2 = 0, invTrim3 = 0, invTrim4 = 0;
+  
+  const ordLengths = []; // Length axis
+  const ordWidths = []; // Width axis
+  
+  const lines = content.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const parts = line.split(',');
+    
+    if (parts[0] === 'INV1') {
+      // 3rd part (0-indexed index 2) is number of sheets in run (e.g. INV1, 999, 10, ...)
+      if (parts[2]) {
+        const qty = parseInt(parts[2].trim());
+        if (!isNaN(qty) && qty > 0) {
+          sheet_count = qty;
+        }
+      }
+      // In beam saw CPOUT INV1: parts[4] is Width (e.g. 61.000), parts[5] is Length (e.g. 121.000)
+      if (parts[4]) raw_max_x = parseFloat(parts[4]); // Board Width
+      if (parts[5]) raw_max_y = parseFloat(parts[5]); // Board Length
+      if (parts[6]) invTrim1 = parseFloat(parts[6]);
+      if (parts[7]) invTrim2 = parseFloat(parts[7]);
+      if (parts[8]) invTrim3 = parseFloat(parts[8]);
+      if (parts[9]) invTrim4 = parseFloat(parts[9]);
+    }
+    
+    if (parts[0] === 'ORD1') {
+      // 3rd is Length, 4th is Width (0-indexed 3 and 4)
+      if (parts[3]) ordLengths.push(parseFloat(parts[3])); // Net lengths
+      if (parts[4]) ordWidths.push(parseFloat(parts[4])); // Net widths
+    }
+  }
+  
+  const net_l = ordLengths.length > 0 ? Math.max(...ordLengths) : 0; // Max net dimension along Length
+  // Cumulate width stacks for beam saw
+  const net_w = ordWidths.reduce((a, b) => a + b, 0); // Cumulated dimension along Width
+  
+  const recWidth = calculateFinalDimension(net_w, raw_max_x); // Final cropped Width
+  const recLength = calculateFinalDimension(net_l, raw_max_y); // Final cropped Length
+  
+  const hasTrim = (invTrim1 > 0.001 || invTrim2 > 0.001 || invTrim3 > 0.001 || invTrim4 > 0.001) ||
+                  (net_w > 0 && net_l > 0 && net_w < raw_max_x - 0.01 && net_l < raw_max_y - 0.01);
+  
+  return {
+    raw_max_x, // Board Width (Dimension 1)
+    raw_max_y, // Board Length (Dimension 2)
+    net_length: net_w, // UI maps this to calcFinX (Width)
+    net_width: net_l,  // UI maps this to calcFinY (Length)
+    recommended_length: recWidth, // UI maps this to finX (Width)
+    recommended_width: recLength, // UI maps this to finY (Length)
+    sheet_count,
+    hasTrim
+  };
+}
+
+// Pull Sheet Parser (handles both specification stack block format and CNC Run CSV format)
+function parsePullSheet(content) {
+  const items = [];
+  const lines = content.split(/\r?\n/);
+  
+  // 1. Check if it's a CNC Run CSV file
+  const isCncRun = lines.some(l => l.trim().startsWith('^Job'));
+  
+  if (isCncRun) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line || line.startsWith('^')) continue;
+      
+      const parts = line.split(',');
+      if (parts.length >= 6) {
+        const fileName = parts[0].trim();
+        
+        // Ignore re-introduced individual parts starting with lowercase 'r' (e.g. rF6f0010)
+        const isReintroPart = fileName.length > 0 && fileName.charAt(0) === 'r';
+        if (isReintroPart) continue;
+
+        const sheetTitle = parts[1].trim();
+        const rawVal1 = parseFloat(parts[2]);
+        const rawVal2 = parseFloat(parts[3]);
+        const rawThick = parseFloat(parts[4]);
+        
+        // parts[2] is Board Width, parts[3] is Board Length
+        const boardWidth = rawVal1 > 150 ? rawVal1 / 25.4 : rawVal1;
+        const boardLength = rawVal2 > 150 ? rawVal2 / 25.4 : rawVal2;
+        const thickness = rawThick > 10 ? rawThick / 25.4 : rawThick;
+        const materialName = parts[5].trim();
+        const layupRequired = parts[10] ? parseInt(parts[10].trim()) : 0;
+        
+        let face = materialName;
+        let core = '';
+        let backer = '';
+        
+        if (layupRequired === 1) {
+          core = 'PB'; // Default substrate core
+          if (materialName.includes('-')) {
+            const matParts = materialName.split('-');
+            // CNC Face Up (first part) is Back Veneer/Laminate
+            backer = matParts[0].replace(/^[\d/.-]+\s+/, '').trim(); // Remove leading thickness
+            // CNC Face Down (second part) is Face Veneer/Laminate
+            face = matParts[1].replace(/\(.*?\)/, '').trim(); // Remove trailing parens
+          } else if (materialName.toUpperCase().includes('2S')) {
+            // E.g. "3/4 2S HPL (0.81250)" -> face and backer are the same (HPL)
+            const cleanedMat = materialName.replace(/^[\d/.-]+\s+2S\s+/i, '').replace(/\(.*?\)/, '').trim();
+            face = cleanedMat;
+            backer = cleanedMat;
+          } else {
+            const cleanedMat = materialName.replace(/^[\d/.-]+\s+/, '').replace(/\(.*?\)/, '').trim();
+            face = cleanedMat;
+            backer = cleanedMat;
+          }
+        }
+        
+        const isBeamSaw = fileName.toUpperCase().startsWith('RY');
+        const isHolzherCnc = fileName.toUpperCase().startsWith('RF') || fileName.toUpperCase().startsWith('RH');
+        const dest = isBeamSaw ? 'Holzher Beam Saw' : (isHolzherCnc ? 'Holzher CNC' : 'Homag');
+        
+        items.push({
+          routing_destination: dest,
+          layup_required: layupRequired === 1,
+          quantity: 1,
+          dimensions: {
+            nominal: `${Math.round(boardWidth)}x${Math.round(boardLength)}`,
+            width_in: boardWidth,
+            length_in: boardLength
+          },
+          stack_composition: {
+            face: face,
+            core: core,
+            backer: backer
+          },
+          material_name: materialName
+        });
+      }
+    }
+    return items;
+  }
+  
+  // 2. Otherwise, fall back to theoretical Spray Booth stack block format
+  let currentDestination = 'Homag';
+  let currentLayup = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    
+    // Check routing category header
+    if (line.includes('Spray Booth --> then Homag')) {
+      currentDestination = 'Homag';
+      currentLayup = true;
+      continue;
+    } else if (line.includes('Spray Booth --> then Beam Saw')) {
+      currentDestination = 'Holzher Beam Saw';
+      currentLayup = true;
+      continue;
+    } else if (line.includes('Homag') && !line.includes('Spray Booth')) {
+      currentDestination = 'Homag';
+      currentLayup = false;
+      continue;
+    } else if (line.includes('Beam Saw') && !line.includes('Spray Booth')) {
+      currentDestination = 'Holzher Beam Saw';
+      currentLayup = false;
+      continue;
+    }
+    
+    // Match Spray Booth stack configuration (3 lines contiguous)
+    // Line 1: Quantity and Face Material
+    const matchLine1 = line.match(/^\s*(?:\((\d+)\)|(\d+))\s+(.+)$/);
+    if (currentLayup && matchLine1) {
+      const qty = parseInt(matchLine1[1] || matchLine1[2]);
+      const face = matchLine1[3].trim();
+      
+      // Look at next lines
+      const line2 = lines[i + 1] ? lines[i + 1].trim() : '';
+      const line3 = lines[i + 2] ? lines[i + 2].trim() : '';
+      
+      // Line 2: Core substrate and thickness/dimensions
+      const matchLine2 = line2.match(/^([a-zA-Z0-9-/]+)\s+([\d/.-]+"?)\s*\(([^)]+)\)/);
+      if (matchLine2) {
+        const core = matchLine2[1].trim();
+        const thickness = matchLine2[2].trim();
+        const rawDims = matchLine2[3].trim();
+        const backer = line3.trim();
+        
+        // Convert dimensions
+        const dims = normalizeDimensions(rawDims);
+        
+        items.push({
+          routing_destination: currentDestination,
+          layup_required: true,
+          quantity: qty,
+          dimensions: {
+            nominal: rawDims,
+            length_in: dims.length,
+            width_in: dims.width
+          },
+          stack_composition: {
+            face: face,
+            core: core,
+            backer: backer
+          }
+        });
+        
+        i += 2; // Jump forward
+        continue;
+      }
+    }
+    
+    // Match Category A Direct-to-Machine standard items
+    // (Qty) Thickness Material Type (Dimensions)
+    // E.g. (4) 3/4" Plywood (5x10)
+    const matchDirect = line.match(/^\s*(?:\((\d+)\)|(\d+))\s+([\d/.-]+"?)\s+(.*?)\s+\(([^)]+)\)$/);
+    if (!currentLayup && matchDirect) {
+      const qty = parseInt(matchDirect[1] || matchDirect[2]);
+      const thickness = matchDirect[3].trim();
+      const materialType = matchDirect[4].trim();
+      const rawDims = matchDirect[5].trim();
+      
+      const dims = normalizeDimensions(rawDims);
+      
+      items.push({
+        routing_destination: currentDestination,
+        layup_required: false,
+        quantity: qty,
+        dimensions: {
+          nominal: rawDims,
+          length_in: dims.length,
+          width_in: dims.width
+        },
+        stack_composition: {
+          face: materialType,
+          core: '',
+          backer: ''
+        }
+      });
+    }
+  }
+  
+  return items;
+}
+
+// Convert pull sheet sizes (nominal feet or explicit inches)
+function normalizeDimensions(dimStr) {
+  let length = 0;
+  let width = 0;
+  
+  // Clean quotes/spaces
+  const cleanStr = dimStr.replace(/"/g, '').trim();
+  const parts = cleanStr.split(/[xX]/);
+  
+  if (parts.length === 2) {
+    const val1 = parseFloat(parts[0]);
+    const val2 = parseFloat(parts[1]);
+    
+    // Check if foot dimensions (e.g. 5x10, 4x8)
+    if (val1 <= 12 && val2 <= 12) {
+      if (val1 === 5 && val2 === 10) {
+        length = 121.0;
+        width = 61.0;
+      } else if (val1 === 4 && val2 === 8) {
+        length = 96.0;
+        width = 48.0;
+      } else {
+        // General foot-to-inch multiplier
+        length = Math.max(val1, val2) * 12.0;
+        width = Math.min(val1, val2) * 12.0;
+      }
+    } else {
+      // Custom inch boundaries (e.g. 46x79 or 50x37)
+      length = Math.max(val1, val2);
+      width = Math.min(val1, val2);
+    }
+  }
+  
+  return { length, width };
+}
+
+// Toast Notification System
+function showToast(title, message, type = 'success') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <div class="toast-content">
+      <h5>${title}</h5>
+      <p>${message}</p>
+    </div>
+  `;
+  container.appendChild(toast);
+  
+  // Remove toast after animation
+  setTimeout(() => {
+    toast.style.animation = 'toastIn 0.3s reverse';
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+// Render Printable Pull Sheet Report matching pull sheet example.pdf
+function renderPullSheetReport() {
+  const container = document.getElementById('pull-sheet-report-container');
+  if (!container) return;
+
+  const operatorName = state.metadata.operatorName || 'Sam H';
+  const dateProcessed = state.metadata.dateProcessed || new Date().toLocaleDateString('en-US');
+  const clientName = state.metadata.client ? state.metadata.client.trim() : '';
+  const projectName = state.metadata.projectName || 'Untitled Project';
+  const jobNumber = state.metadata.jobNumber || 'N/A';
+
+  const projectSubheader = clientName ? `${clientName} - ${projectName}` : projectName;
+
+  // Group materials by machine_type
+  const machineGroups = {};
+  if (state.materials) {
+    Object.keys(state.materials).forEach(key => {
+      const mat = state.materials[key];
+      const mType = mat.machine_type || 'Homag';
+      if (!machineGroups[mType]) {
+        machineGroups[mType] = { direct: [], layup: [] };
+      }
+      if (mat.layup_required === 0) {
+        machineGroups[mType].direct.push(mat);
+      } else {
+        machineGroups[mType].layup.push(mat);
+      }
+    });
+  }
+
+  // Helper to clean leading thickness fraction prefixes and trailing machine/nest parenthetical notes from material titles
+  function cleanMaterialTitle(name) {
+    if (!name) return '';
+    let cleaned = name.replace(/\s*\([^)]*(beam\s*saw|cnc|nest|homag|holzher)[^)]*\)/i, '');
+    // Remove leading thickness fraction/decimal prefixes while preserving 2S, 1S, S2S designations
+    cleaned = cleaned.replace(/^(\d+[\s-]+\d+[-/]\d+(?![a-zA-Z])|\d+[-/]\d+(?![a-zA-Z])|\d+\.\d+|\d+["”']?)\s*/i, '').trim();
+    cleaned = cleaned.replace(/^["”']\s*/, '').trim();
+    return cleaned || name;
+  }
+
+  // Format thickness string helper (e.g. 0.25 -> 1/4", 0.75 -> 3/4", 1.125 -> 1-1/8", 0.5 -> 1/2")
+  function formatThicknessStr(val) {
+    if (!val || isNaN(val) || val <= 0) return '0"';
+    
+    let whole = Math.floor(val);
+    let frac = val - whole;
+    
+    // Check nearest 16th
+    let sixteenths = Math.round(frac * 16);
+    if (sixteenths === 16) {
+      whole += 1;
+      sixteenths = 0;
+    }
+    
+    if (sixteenths === 0) {
+      return `${whole}"`;
+    }
+    
+    // Reduce fraction
+    let num = sixteenths;
+    let den = 16;
+    while (num % 2 === 0 && den % 2 === 0) {
+      num /= 2;
+      den /= 2;
+    }
+    
+    const fracStr = `${num}/${den}`;
+    if (whole > 0) {
+      return `${whole}-${fracStr}"`;
+    }
+    return `${fracStr}"`;
+  }
+
+  // Format dimension bounds string (exact footage: (5x10), (5x9), (4x8); non-exact footage: explicit inches preserving parsed Width x Length orientation (e.g. 85"x74"))
+  function formatBoundsStr(fWid, fLen) {
+    const w = fWid || 0;
+    const l = fLen || 0;
+    const maxDim = Math.max(w, l);
+    const minDim = Math.min(w, l);
+    
+    // Check if the calculated offcut size in material_summary is an exact full stock sheet (5x10, 5x9, or 4x8)
+    const isFull5x10 = (Math.abs(maxDim - 121) <= 1.5 || Math.abs(maxDim - 120) <= 1.5) && 
+                       (Math.abs(minDim - 61) <= 1.5 || Math.abs(minDim - 60) <= 1.5);
+    const isFull5x9  = (Math.abs(maxDim - 109) <= 1.5 || Math.abs(maxDim - 108) <= 1.5) && 
+                       (Math.abs(minDim - 61) <= 1.5 || Math.abs(minDim - 60) <= 1.5);
+    const isFull4x8  = (Math.abs(maxDim - 96) <= 1.5 || Math.abs(maxDim - 97) <= 1.5) && 
+                       (Math.abs(minDim - 48) <= 1.5 || Math.abs(minDim - 49) <= 1.5);
+
+    if (isFull5x10) return '(5x10)';
+    if (isFull5x9)  return '(5x9)';
+    if (isFull4x8)  return '(4x8)';
+    
+    // Custom / non-stock offcut sizes: ALWAYS display Board Width x Board Length in exact parsed order as passed!
+    const renderWid = w ? Math.round(w) : 48;
+    const renderLen = l ? Math.round(l) : 96;
+    return `(${renderWid}"x${renderLen}")`;
+  }
+
+  let html = `
+    <div class="ps-report-header">
+      <div class="ps-header-top">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <img src="logo.png" alt="Corporate Interiors Logo" style="height: 32px; width: auto; object-fit: contain;">
+          <span>Drawn by: ${operatorName}</span>
+        </div>
+        <h2 class="ps-header-title">Pull Sheet</h2>
+        <span>${dateProcessed}</span>
+      </div>
+      <div class="ps-header-sub">
+        <span>${projectSubheader}</span>
+        <span>Job #: ${jobNumber}</span>
+      </div>
+    </div>
+  `;
+
+  // Render Machine Groups
+  const machineKeys = Object.keys(machineGroups);
+  if (machineKeys.length === 0) {
+    html += `<p style="padding: 20px; text-align: center;">No materials configured in wizard.</p>`;
+  } else {
+    machineKeys.forEach(mType => {
+      const group = machineGroups[mType];
+
+      // Category A: Direct-to-Machine Items
+      if (group.direct.length > 0) {
+        html += `
+          <div class="ps-section">
+            <h3 class="ps-section-title">${mType}</h3>
+        `;
+        group.direct.forEach(mat => {
+          const consolidatedRows = getConsolidatedMaterialRows().filter(r => r.material_name === mat.name && r.machine_type === mat.machine_type);
+          const rowsToRender = consolidatedRows.length > 0 ? consolidatedRows : [{
+            quantity: mat.sheets ? mat.sheets.length : 1,
+            thickness: mat.thickness || 0.75,
+            final_length: mat.final_length,
+            final_width: mat.final_width,
+            raw_max_x: mat.raw_max_x,
+            raw_max_y: mat.raw_max_y
+          }];
+
+          const cleanTitle = cleanMaterialTitle(mat.name);
+
+          rowsToRender.forEach(r => {
+            const thickStr = formatThicknessStr(r.thickness || 0.75);
+            const boundsStr = formatBoundsStr(r.final_length, r.final_width, r.raw_max_x, r.raw_max_y);
+            const isWholeSheets = !!(mat.use_whole_sheets || r.use_whole_sheets);
+            const isCustomSize = !isWholeSheets && !boundsStr.includes('(5x10)') && !boundsStr.includes('(5x9)') && !boundsStr.includes('(4x8)');
+            const offcutNote = isCustomSize ? ' - If offcut is available' : '';
+
+            html += `
+              <div class="ps-direct-item">(${r.quantity}) ${thickStr} ${cleanTitle} ${boundsStr}${offcutNote}</div>
+            `;
+          });
+        });
+        html += `</div>`;
+      }
+
+      // Category B: Spray Booth Lay-Up Stacks
+      if (group.layup.length > 0) {
+        html += `
+          <div class="ps-section">
+            <h3 class="ps-section-title">Spray Booth --> then ${mType}</h3>
+        `;
+        group.layup.forEach(mat => {
+          const consolidatedRows = getConsolidatedMaterialRows().filter(r => r.material_name === mat.name && r.machine_type === mat.machine_type);
+          const rowsToRender = consolidatedRows.length > 0 ? consolidatedRows : [{
+            quantity: mat.sheets ? mat.sheets.length : 1,
+            faceUp_matl: mat.face_material || 'VENEER',
+            core_substrate: mat.core_substrate || 'PB',
+            faceDown_matl: mat.backer_material || 'BKR',
+            thickness: mat.thickness || 0.75,
+            grain_direction: mat.grain_direction || 'Horizontal',
+            final_length: mat.final_length,
+            final_width: mat.final_width,
+            raw_max_x: mat.raw_max_x,
+            raw_max_y: mat.raw_max_y,
+            use_whole_sheets: mat.use_whole_sheets || 0
+          }];
+
+          rowsToRender.forEach(r => {
+            const thickStr = formatThicknessStr(r.thickness || 0.75);
+            const boundsStr = formatBoundsStr(r.final_length, r.final_width, r.raw_max_x, r.raw_max_y);
+            const faceUp = r.faceUp_matl;
+            const core = r.core_substrate || 'PB';
+            const faceDown = r.faceDown_matl;
+            const isMcpCore = (core === 'BMCP' || core === 'WMCP');
+            
+            let stackHtml = '';
+            let runBadgeHtml = '';
+            if (r.custom_layup) {
+              const runName = r.custom_layup.runFileName || r.fileName || '';
+              if (runName) {
+                runBadgeHtml = `<div class="ps-layup-run-badge">${runName}</div>`;
+              }
+              stackHtml = `
+                <div class="ps-layup-diagram-container">
+                  ${generateCustomLayupSvg(r.custom_layup)}
+                </div>
+              `;
+            } else if (isMcpCore) {
+              // 2-tier stack card for pre-bought 2-sided Black/White MCP core substrates
+              let topLayer = '';
+              let bottomLayer = '';
+              
+              if (faceUp && faceUp.trim() && faceUp.toUpperCase() !== core.toUpperCase()) {
+                topLayer = faceUp;
+                bottomLayer = (faceDown && faceDown.trim() && faceDown.toUpperCase() !== core.toUpperCase()) ? faceDown : core;
+              } else if (faceDown && faceDown.trim() && faceDown.toUpperCase() !== core.toUpperCase()) {
+                topLayer = core;
+                bottomLayer = faceDown;
+              } else {
+                topLayer = faceUp || 'LAMINATE';
+                bottomLayer = core;
+              }
+              
+              stackHtml = `
+                <div class="ps-layup-stack">
+                  <div class="ps-stack-tier">${topLayer}</div>
+                  <div class="ps-stack-divider"></div>
+                  <div class="ps-stack-tier">${bottomLayer}</div>
+                </div>
+              `;
+            } else {
+              // Standard 3-tier stack card (Face Up / Core Substrate / Face Down)
+              const displayFaceUp = faceUp || 'VENEER';
+              const displayFaceDown = faceDown || 'BKR';
+              stackHtml = `
+                <div class="ps-layup-stack">
+                  <div class="ps-stack-tier">${displayFaceUp}</div>
+                  <div class="ps-stack-divider"></div>
+                  <div class="ps-stack-tier">${core}</div>
+                  <div class="ps-stack-divider"></div>
+                  <div class="ps-stack-tier">${displayFaceDown}</div>
+                </div>
+              `;
+            }
+
+            const grainDisplay = r.grain_direction === 'No Grain' ? 'No Grain' : `${r.grain_direction || 'Horizontal'} Grain`;
+            const isWholeSheets = !!(mat.use_whole_sheets || r.use_whole_sheets);
+            const isCustomSize = !isWholeSheets && !boundsStr.includes('(5x10)') && !boundsStr.includes('(5x9)') && !boundsStr.includes('(4x8)');
+            const offcutNoteHtml = isCustomSize ? `<div style="font-size: 11px; font-weight: normal; margin-top: 2px; color: #d32f2f; font-style: italic;">If offcut is available</div>` : '';
+
+            html += `
+              <div class="ps-layup-card">
+                <div class="ps-layup-qty">(${r.quantity})</div>
+                ${stackHtml}
+                <div class="ps-layup-dims">
+                  ${runBadgeHtml}
+                  <div>${thickStr} ${boundsStr}</div>
+                  ${offcutNoteHtml}
+                  <div style="font-size: 12px; font-weight: normal; margin-top: 4px; color: #444;">${grainDisplay}</div>
+                </div>
+              </div>
+            `;
+          });
+        });
+        html += `</div>`;
+      }
+    });
+  }
+
+  container.innerHTML = html;
+}
+
+function handlePrintPullSheet() {
+  renderPullSheetReport();
+  
+  const rawJobName = (state.metadata.projectName && state.metadata.projectName.trim())
+    ? state.metadata.projectName.trim()
+    : ((state.metadata.jobNumber && state.metadata.jobNumber.trim()) 
+        ? state.metadata.jobNumber.trim() 
+        : 'Project');
+        
+  // Clean any invalid filename characters so operating system save dialog handles it smoothly
+  const cleanJobName = rawJobName.replace(/[/\\?%*:|"<>]/g, '-').trim();
+  const targetTitle = `Pull Sheet - ${cleanJobName}`;
+  const originalTitle = document.title;
+  
+  // Set document title dynamically so browser PDF export defaults to "Pull Sheet - $jobname.pdf"
+  document.title = targetTitle;
+  
+  window.print();
+  
+  // Restore document title after print dialog
+  setTimeout(() => {
+    document.title = originalTitle;
+  }, 1000);
+}
+
+// Cache session state so user input is preserved across navigation tabs and setting changes
+function saveSessionCache() {
+  try {
+    const cacheData = {
+      pastedPath: state.pastedPath,
+      pastedPathsList: Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value),
+      metadata: state.metadata,
+      settings: state.settings,
+      materials: state.materials,
+      files: state.files
+    };
+    sessionStorage.setItem('ps_wizard_session_cache', JSON.stringify(cacheData));
+  } catch (e) {
+    console.warn('Could not save session cache:', e);
+  }
+}
+
+function restoreSessionCache() {
+  try {
+    const raw = sessionStorage.getItem('ps_wizard_session_cache');
+    if (!raw) return false;
+    const cacheData = JSON.parse(raw);
+    if (!cacheData) return false;
+
+    if (cacheData.metadata) {
+      state.metadata = Object.assign(state.metadata, cacheData.metadata);
+      if (document.getElementById('meta-job-number')) document.getElementById('meta-job-number').value = state.metadata.jobNumber || '';
+      if (document.getElementById('meta-client')) document.getElementById('meta-client').value = state.metadata.client || '';
+      if (document.getElementById('meta-project-name')) document.getElementById('meta-project-name').value = state.metadata.projectName || '';
+      if (document.getElementById('meta-operator-name')) document.getElementById('meta-operator-name').value = state.metadata.operatorName || '';
+      if (document.getElementById('meta-date-processed')) document.getElementById('meta-date-processed').value = state.metadata.dateProcessed || '';
+    }
+
+    if (cacheData.settings) {
+      state.settings = Object.assign(state.settings, cacheData.settings);
+      if (document.getElementById('settings-overcut')) document.getElementById('settings-overcut').value = state.settings.overcutOverage;
+      if (document.getElementById('settings-offcut')) document.getElementById('settings-offcut').value = state.settings.minOffcutDim;
+    }
+
+    if (cacheData.pastedPathsList && Array.isArray(cacheData.pastedPathsList) && cacheData.pastedPathsList.length > 0) {
+      const container = document.getElementById('paths-list-container');
+      if (container) {
+        container.innerHTML = '';
+        cacheData.pastedPathsList.forEach((pathVal, idx) => {
+          const row = document.createElement('div');
+          row.className = 'path-input-row';
+          row.style.display = 'flex';
+          row.style.gap = '8px';
+          row.style.alignItems = 'center';
+          row.innerHTML = `
+            <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="${pathVal}">
+            ${idx === 0 ? `
+              <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            ` : `
+              <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            `}
+          `;
+          container.appendChild(row);
+          if (idx === 0) {
+            row.querySelector('#btn-add-path-field').addEventListener('click', () => {
+              const newRow = document.createElement('div');
+              newRow.className = 'path-input-row';
+              newRow.style.display = 'flex';
+              newRow.style.gap = '8px';
+              newRow.style.alignItems = 'center';
+              newRow.innerHTML = `
+                <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
+                <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+              `;
+              container.appendChild(newRow);
+              newRow.querySelector('.btn-remove-path-field').addEventListener('click', () => { newRow.remove(); saveSessionCache(); });
+              saveSessionCache();
+            });
+          } else {
+            row.querySelector('.btn-remove-path-field').addEventListener('click', () => { row.remove(); saveSessionCache(); });
+          }
+        });
+      }
+    }
+
+    if (cacheData.files && Array.isArray(cacheData.files) && cacheData.files.length > 0) {
+      state.files = cacheData.files;
+    }
+
+    if (cacheData.materials && Object.keys(cacheData.materials).length > 0) {
+      state.materials = cacheData.materials;
+      displayScanResults();
+      buildWizard();
+      updateDatabasePreview();
+
+      if (document.getElementById('section-metadata')) document.getElementById('section-metadata').classList.remove('hidden');
+      if (document.getElementById('section-wizard')) document.getElementById('section-wizard').classList.remove('hidden');
+    }
+    return true;
+  } catch (e) {
+    console.warn('Could not restore session cache:', e);
+    return false;
+  }
+}
+
+// Download helper for JSON data
+function downloadJsonFile(fileName, dataObj) {
+  const jsonStr = typeof dataObj === 'string' ? dataObj : JSON.stringify(dataObj, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Save / Export job state directly to the inputted project directory without save dialogue
+async function handleSaveJob() {
+  const hasData = (state.materials && Object.keys(state.materials).length > 0) || 
+                  (state.files && state.files.length > 0) || 
+                  (state.metadata && (state.metadata.jobNumber || state.metadata.projectName));
+
+  if (!hasData) {
+    showToast('No Data', 'No active job or materials to save. Scan a directory or enter project details first.', 'warning');
+    return;
+  }
+
+  // Determine target paths from input fields (supporting multi-row and delimited paths)
+  const pathFields = [];
+  document.querySelectorAll('.pasted-path-field').forEach(el => {
+    const val = (el.value || '').trim().replace(/^["']|["']$/g, '');
+    if (val) {
+      val.split(/[;,]/).map(p => p.trim().replace(/^["']|["']$/g, '')).filter(Boolean).forEach(p => {
+        if (!pathFields.includes(p)) pathFields.push(p);
+      });
+    }
+  });
+
+  let targetPaths = pathFields.length > 0 ? pathFields : (state.pastedPath ? [state.pastedPath.trim().replace(/^["']|["']$/g, '')] : []);
+  if (targetPaths.length === 0 && state.files && state.files.length > 0 && state.files[0].scannedPath) {
+    targetPaths.push(state.files[0].scannedPath.trim().replace(/^["']|["']$/g, ''));
+  }
+
+  if (targetPaths.length === 0) {
+    showToast('Directory Required', 'Please enter or scan a target project folder path to save the job file.', 'warning');
+    return;
+  }
+
+  // Build full job payload preserving all user modifications
+  const jobPayload = {
+    version: '1.0',
+    appName: 'Pull Sheet Wizard',
+    savedAt: new Date().toISOString(),
+    savedBy: state.metadata.operatorName || '',
+    pastedPath: state.pastedPath || targetPaths[0],
+    pastedPathsList: targetPaths,
+    metadata: Object.assign({}, state.metadata),
+    settings: Object.assign({}, state.settings),
+    materials: JSON.parse(JSON.stringify(state.materials)),
+    files: (state.files || []).map(f => ({
+      name: f.name,
+      relativePath: f.relativePath,
+      scannedPath: f.scannedPath,
+      content: f.content,
+      isReintro: f.isReintro || false
+    }))
+  };
+
+  const rawJobNumber = (state.metadata && state.metadata.jobNumber ? state.metadata.jobNumber.trim() : '');
+  const cleanJobNumber = rawJobNumber.replace(/[/\\?%*:|"<>]/g, '-').trim();
+  
+  let fileName = 'pull_sheet.json';
+  if (cleanJobNumber) {
+    fileName = `${cleanJobNumber}_pull_sheet.json`;
+  } else {
+    // Check if target folder name starts with a job number (e.g. 180577-1)
+    const folderParts = (targetPaths[0] || '').split(/[\\/]/).filter(Boolean);
+    const lastFolder = folderParts[folderParts.length - 1] || '';
+    const match = lastFolder.match(/^(\d+-\d+)/);
+    if (match) {
+      fileName = `${match[1]}_pull_sheet.json`;
+    }
+  }
+
+  // 1. If browser File System Access API directory handle is active, save directly to project folder
+  if (state.directoryHandle && state.directoryHandle.getFileHandle) {
+    try {
+      const fileHandle = await state.directoryHandle.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(JSON.stringify(jobPayload, null, 2));
+      await writable.close();
+      showToast('Job Saved', `Saved "${fileName}" directly to project directory.`, 'success');
+      saveSessionCache();
+      return;
+    } catch (err) {
+      console.warn('Could not write to native directory handle:', err);
+    }
+  }
+
+  // 2. Direct save to inputted project folder via companion server if online
+  if (isServerConnected) {
+    try {
+      const res = await fetch(`${companionApiBase}/api/save-job`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetPath: targetPaths[0],
+          jobJson: JSON.stringify(jobPayload, null, 2),
+          fileName: fileName
+        })
+      });
+
+      if (res.ok) {
+        const resData = await res.json();
+        showToast('Job Saved', `Saved ${fileName} directly to project directory:\n${resData.savedPath || targetPaths[0]}`, 'success');
+        saveSessionCache();
+        return;
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        showToast('Save Failed', errData.message || `Directory does not exist or cannot be written: ${targetPaths[0]}`, 'error');
+        return;
+      }
+    } catch (e) {
+      console.error('Backend /api/save-job request error:', e);
+      showToast('Save Error', 'Connection error while saving job to server.', 'error');
+      return;
+    }
+  }
+
+  // 3. Fallback: Browser file download trigger
+  try {
+    const blob = new Blob([JSON.stringify(jobPayload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 200);
+    showToast('Job Downloaded', `Downloaded "${fileName}".`, 'success');
+    saveSessionCache();
+    return;
+  } catch (err) {
+    console.error('Browser download failed:', err);
+    showToast('Save Failed', 'Could not save or download job configuration.', 'error');
+  }
+}
+
+// Handle Import Job button click: opens file picker dialog for .json job files
+function handleImportJobClick() {
+  const fileImportInput = document.getElementById('file-import-job');
+  if (fileImportInput) {
+    fileImportInput.value = ''; // Reset input to allow re-selecting same file
+    fileImportInput.click();
+  }
+}
+
+// Handle Import Job file selection
+function handleImportJobFile(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const content = e.target.result;
+      const jobData = JSON.parse(content);
+      applyImportedJobData(jobData, file.name);
+    } catch (err) {
+      console.error('Failed to parse imported job file:', err);
+      showToast('Import Failed', 'The selected file is not a valid JSON job file.', 'error');
+    }
+  };
+  reader.onerror = () => {
+    showToast('Import Error', 'Could not read selected file from disk.', 'error');
+  };
+  reader.readAsText(file);
+
+  // Reset file input so user can pick the same file again if desired
+  event.target.value = '';
+}
+
+// Apply imported job data and restore complete UI state
+function applyImportedJobData(jobData, fileName = '') {
+  if (!jobData || typeof jobData !== 'object') {
+    showToast('Import Failed', 'Invalid job file structure.', 'error');
+    return;
+  }
+
+  // 1. Restore metadata
+  if (jobData.metadata) {
+    state.metadata = Object.assign(state.metadata, jobData.metadata);
+    if (document.getElementById('meta-job-number')) document.getElementById('meta-job-number').value = state.metadata.jobNumber || '';
+    if (document.getElementById('meta-client')) document.getElementById('meta-client').value = state.metadata.client || '';
+    if (document.getElementById('meta-project-name')) document.getElementById('meta-project-name').value = state.metadata.projectName || '';
+    if (document.getElementById('meta-operator-name')) document.getElementById('meta-operator-name').value = state.metadata.operatorName || '';
+    if (document.getElementById('meta-date-processed')) document.getElementById('meta-date-processed').value = state.metadata.dateProcessed || '';
+  }
+
+  // 2. Restore settings
+  if (jobData.settings) {
+    state.settings = Object.assign(state.settings, jobData.settings);
+    if (document.getElementById('settings-overcut')) document.getElementById('settings-overcut').value = state.settings.overcutOverage;
+    if (document.getElementById('settings-offcut')) document.getElementById('settings-offcut').value = state.settings.minOffcutDim;
+  }
+
+  // 3. Restore scan path fields
+  const pathsList = (jobData.pastedPathsList && Array.isArray(jobData.pastedPathsList) && jobData.pastedPathsList.length > 0)
+    ? jobData.pastedPathsList
+    : (jobData.pastedPath ? [jobData.pastedPath] : []);
+
+  if (pathsList.length > 0) {
+    state.pastedPath = pathsList[0];
+    const container = document.getElementById('paths-list-container');
+    if (container) {
+      container.innerHTML = '';
+      pathsList.forEach((pathVal, idx) => {
+        const row = document.createElement('div');
+        row.className = 'path-input-row';
+        row.style.display = 'flex';
+        row.style.gap = '8px';
+        row.style.alignItems = 'center';
+        row.innerHTML = `
+          <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="${pathVal}">
+          ${idx === 0 ? `
+            <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          ` : `
+            <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          `}
+        `;
+        container.appendChild(row);
+        if (idx === 0) {
+          row.querySelector('#btn-add-path-field').addEventListener('click', () => {
+            const newRow = document.createElement('div');
+            newRow.className = 'path-input-row';
+            newRow.style.display = 'flex';
+            newRow.style.gap = '8px';
+            newRow.style.alignItems = 'center';
+            newRow.innerHTML = `
+              <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
+              <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            `;
+            container.appendChild(newRow);
+            newRow.querySelector('.btn-remove-path-field').addEventListener('click', () => { newRow.remove(); saveSessionCache(); });
+            saveSessionCache();
+          });
+        } else {
+          row.querySelector('.btn-remove-path-field').addEventListener('click', () => { row.remove(); saveSessionCache(); });
+        }
+      });
+    }
+  }
+
+  // 4. Restore files & materials
+  if (jobData.files && Array.isArray(jobData.files)) {
+    state.files = jobData.files;
+  }
+
+  if (jobData.materials && typeof jobData.materials === 'object') {
+    state.materials = jobData.materials;
+  }
+
+  // 5. Re-render UI components
+  displayScanResults();
+  buildWizard();
+  updateDatabasePreview();
+  renderPullSheetReport();
+  saveSessionCache();
+
+  // 6. Show active sections
+  if (document.getElementById('section-metadata')) document.getElementById('section-metadata').classList.remove('hidden');
+  if (document.getElementById('section-wizard')) document.getElementById('section-wizard').classList.remove('hidden');
+  if (document.getElementById('section-export')) document.getElementById('section-export').classList.remove('hidden');
+  const scanResults = document.getElementById('scan-results');
+  if (scanResults && state.files && state.files.length > 0) {
+    scanResults.classList.remove('hidden');
+  }
+
+  const matCount = Object.keys(state.materials || {}).length;
+  const projectLabel = state.metadata.projectName || state.metadata.jobNumber || fileName || 'Project';
+  showToast('Job Imported', `Loaded "${projectLabel}" with ${matCount} material${matCount === 1 ? '' : 's'}.`, 'success');
+}
+
+/* ==========================================================================
+   INTERACTIVE LAY-UP WIZARD & KONVA.JS DRAFTING ENGINE (v12)
+   ========================================================================== */
+
+let currentLayupState = null;
+let layupKonvaStage = null;
+
+function parseDimensionInput(str) {
+  if (!str) return NaN;
+  const s = str.trim().replace(/"/g, '');
+  if (!s) return NaN;
+  if (/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+  const wf = s.match(/^(\d+)[\s-]+(\d+)\/(\d+)$/);
+  if (wf) {
+    const w = parseFloat(wf[1]);
+    const n = parseFloat(wf[2]);
+    const d = parseFloat(wf[3]);
+    return d !== 0 ? w + (n / d) : NaN;
+  }
+  const pf = s.match(/^(\d+)\/(\d+)$/);
+  if (pf) {
+    const n = parseFloat(pf[1]);
+    const d = parseFloat(pf[2]);
+    return d !== 0 ? n / d : NaN;
+  }
+  return parseFloat(s);
+}
+
+// Format dimension helper supporting fractional precision (1, 1/8, 1/16, 1/32, 1/64, decimal) and feet-inches
+function formatLayupDimension(inches, useFeetInches, precisionSetting) {
+  const val = parseFloat(inches) || 0;
+  const prec = precisionSetting || (currentLayupState ? currentLayupState.precision : '16') || '16';
+
+  if (prec === 'decimal' || prec === 'dec') {
+    if (!useFeetInches) {
+      return `${val.toFixed(3)}"`;
+    }
+    const feet = Math.floor(val / 12);
+    const inchesRem = val % 12;
+    if (feet > 0) {
+      return `${feet}'-${inchesRem.toFixed(3)}"`;
+    }
+    return `${val.toFixed(3)}"`;
+  }
+
+  let denom = 16;
+  if (prec === '1') denom = 1;
+  else if (prec === '1/8' || prec === '8') denom = 8;
+  else if (prec === '1/16' || prec === '16') denom = 16;
+  else if (prec === '1/32' || prec === '32') denom = 32;
+  else if (prec === '1/64' || prec === '64') denom = 64;
+
+  let totalInches;
+  if (denom === 1) {
+    totalInches = Math.round(val);
+  } else {
+    totalInches = Math.round(val * denom) / denom;
+  }
+
+  const feet = useFeetInches ? Math.floor(totalInches / 12) : 0;
+  const remInches = useFeetInches ? (totalInches % 12) : totalInches;
+  let remWhole = Math.floor(remInches);
+  const frac = remInches - remWhole;
+
+  let fracNum = Math.round(frac * denom);
+  if (fracNum === denom) {
+    remWhole += 1;
+    fracNum = 0;
+  }
+
+  let inchStr = '';
+  if (denom === 1 || fracNum === 0) {
+    inchStr = `${remWhole}"`;
+  } else {
+    let n = fracNum, d = denom;
+    while (n % 2 === 0 && d % 2 === 0) {
+      n /= 2;
+      d /= 2;
+    }
+    inchStr = remWhole > 0 ? `${remWhole}-${n}/${d}"` : `${n}/${d}"`;
+  }
+
+  if (useFeetInches && feet > 0) {
+    return `${feet}'-${inchStr}`;
+  }
+  return inchStr;
+}
+
+// Generate high-contrast vector drafting SVG matching resource diagram for pull sheet print
+function generateCustomLayupSvg(layupData) {
+  if (!layupData) return '';
+  const totalL = layupData.sheetLength || 96;
+  const totalW = layupData.sheetWidth || 48;
+  const isVert = (layupData.splitOrientation || 'vertical') === 'vertical';
+  const splitPos = layupData.splitPos !== undefined ? layupData.splitPos : (isVert ? totalL / 2 : totalW / 2);
+  const labelA = layupData.labelA || 'Laminate A';
+  const labelB = layupData.labelB || 'Laminate B';
+  const grain = layupData.grainDirection || 'Horizontal';
+  const useFeetInches = !!layupData.useFeetInches;
+  const precision = layupData.precision || '16';
+
+  const svgW = 460;
+  const svgH = 210;
+  const marginL = 34;
+  const marginT = 24;
+  const maxRectW = 390;
+  const maxRectH = 152;
+
+  const scale = Math.min(maxRectW / totalL, maxRectH / totalW);
+  const rectW = totalL * scale;
+  const rectH = totalW * scale;
+  
+  const rectX = marginL + (maxRectW - rectW) / 2;
+  const rectY = marginT + (maxRectH - rectH) / 2;
+  
+  const strTotalL = formatLayupDimension(totalL, useFeetInches, precision);
+  const strTotalW = formatLayupDimension(totalW, useFeetInches, precision);
+
+  let cutX1, cutY1, cutX2, cutY2;
+  let half1W, half1H, half2W, half2H;
+  let half1X, half1Y, half2X, half2Y;
+  let strDim1, strDim2;
+
+  if (isVert) {
+    const cutPosPx = splitPos * scale;
+    cutX1 = rectX + cutPosPx;
+    cutY1 = rectY;
+    cutX2 = rectX + cutPosPx;
+    cutY2 = rectY + rectH;
+    
+    half1X = rectX;
+    half1Y = rectY;
+    half1W = cutPosPx;
+    half1H = rectH;
+
+    half2X = rectX + cutPosPx;
+    half2Y = rectY;
+    half2W = rectW - cutPosPx;
+    half2H = rectH;
+
+    strDim1 = formatLayupDimension(splitPos, useFeetInches, precision);
+    strDim2 = formatLayupDimension(totalL - splitPos, useFeetInches, precision);
+  } else {
+    const cutPosPx = splitPos * scale;
+    cutX1 = rectX;
+    cutY1 = rectY + cutPosPx;
+    cutX2 = rectX + rectW;
+    cutY2 = rectY + cutPosPx;
+
+    half1X = rectX;
+    half1Y = rectY;
+    half1W = rectW;
+    half1H = cutPosPx;
+
+    half2X = rectX;
+    half2Y = rectY + cutPosPx;
+    half2W = rectW;
+    half2H = rectH - cutPosPx;
+
+    strDim1 = formatLayupDimension(splitPos, useFeetInches, precision);
+    strDim2 = formatLayupDimension(totalW - splitPos, useFeetInches, precision);
+  }
+
+  function makeGrainSymbol(cx, cy, dir) {
+    if (dir === 'No Grain') return '';
+    if (dir === 'Vertical') {
+      return `
+        <g transform="translate(${cx}, ${cy})">
+          <line x1="0" y1="-14" x2="0" y2="14" stroke="#444444" stroke-width="1.2"/>
+          <polyline points="-4,-9 0,-14 4,-9" fill="none" stroke="#444444" stroke-width="1.2"/>
+          <polyline points="-4,9 0,14 4,9" fill="none" stroke="#444444" stroke-width="1.2"/>
+          <text x="12" y="0" font-family="'Inter', sans-serif" font-size="8" fill="#444444" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 12, 0)">Grain</text>
+        </g>
+      `;
+    } else {
+      // Horizontal
+      return `
+        <g transform="translate(${cx}, ${cy})">
+          <line x1="-14" y1="0" x2="14" y2="0" stroke="#444444" stroke-width="1.2"/>
+          <polyline points="-9,-4 -14,0 -9,4" fill="none" stroke="#444444" stroke-width="1.2"/>
+          <polyline points="9,-4 14,0 9,4" fill="none" stroke="#444444" stroke-width="1.2"/>
+          <text x="0" y="-5" font-family="'Inter', sans-serif" font-size="8" fill="#444444" text-anchor="middle">Grain</text>
+        </g>
+      `;
+    }
+  }
+
+  function getReqPillWidth(text) {
+    const cleanText = text || 'Laminate';
+    return Math.max(50, cleanText.length * 7 + 16);
+  }
+
+  function getPillWidth(text, maxW) {
+    const cleanText = text || 'Laminate';
+    const textLen = getReqPillWidth(cleanText);
+    return Math.min(maxW - 8, textLen);
+  }
+
+  function makePill(cx, cy, text, maxW) {
+    const cleanText = text || 'Laminate';
+    const pillW = getPillWidth(cleanText, maxW);
+    return `
+      <g transform="translate(${cx}, ${cy})">
+        <rect x="${-pillW / 2}" y="-11" width="${pillW}" height="22" rx="11" ry="11" fill="#ffffff" stroke="#000000" stroke-width="1.2"/>
+        <text x="0" y="3.5" font-family="'Outfit', 'Inter', sans-serif" font-size="10" font-weight="700" fill="#d32f2f" text-anchor="middle">${cleanText}</text>
+      </g>
+    `;
+  }
+
+  function makeLeaderLine(tx, ty, dirX, dirY, text) {
+    const cleanText = text || 'Laminate';
+    const ex = tx + (dirX >= 0 ? 22 : -22);
+    const ey = ty + (dirY >= 0 ? 20 : -20);
+    const sx = ex + (dirX >= 0 ? 28 : -28);
+    const textAnchor = dirX >= 0 ? 'start' : 'end';
+    const textX = dirX >= 0 ? sx + 4 : sx - 4;
+    return `
+      <g>
+        <circle cx="${tx}" cy="${ty}" r="2.5" fill="#d32f2f"/>
+        <polyline points="${tx},${ty} ${ex},${ey} ${sx},${ey}" fill="none" stroke="#d32f2f" stroke-width="1.2"/>
+        <text x="${textX}" y="${ey + 3.5}" font-family="'Outfit', 'Inter', sans-serif" font-size="10" font-weight="700" fill="#d32f2f" text-anchor="${textAnchor}">${cleanText}</text>
+      </g>
+    `;
+  }
+
+  const reqW1 = getReqPillWidth(labelA);
+  const reqW2 = getReqPillWidth(labelB);
+
+  const isSmall1 = isVert ? (half1W < reqW1 + 8) : (half1H < 22);
+  const isSmall2 = isVert ? (half2W < reqW2 + 8) : (half2H < 22);
+
+  let pill1Svg, pill2Svg, grain1Svg, grain2Svg;
+  if (isVert) {
+    grain1Svg = makeGrainSymbol(half1X + half1W / 2, half1Y + half1H / 2 + 20, grain);
+    grain2Svg = makeGrainSymbol(half2X + half2W / 2, half2Y + half2H / 2 + 20, grain);
+
+    pill1Svg = isSmall1 
+      ? makeLeaderLine(half1X + half1W / 2, half1Y + half1H / 2, -1, -1, labelA)
+      : makePill(half1X + half1W / 2, half1Y + half1H / 2 - (grain !== 'No Grain' ? 12 : 0), labelA, half1W);
+
+    pill2Svg = isSmall2
+      ? makeLeaderLine(half2X + half2W / 2, half2Y + half2H / 2, 1, -1, labelB)
+      : makePill(half2X + half2W / 2, half2Y + half2H / 2 - (grain !== 'No Grain' ? 12 : 0), labelB, half2W);
+  } else {
+    const pill1W = getPillWidth(labelA, half1W);
+    const pill2W = getPillWidth(labelB, half2W);
+
+    pill1Svg = isSmall1
+      ? makeLeaderLine(half1X + half1W / 2, half1Y + half1H / 2, 1, 1, labelA)
+      : makePill(half1X + half1W / 2, half1Y + half1H / 2, labelA, half1W);
+
+    pill2Svg = isSmall2
+      ? makeLeaderLine(half2X + half2W / 2, half2Y + half2H / 2, 1, -1, labelB)
+      : makePill(half2X + half2W / 2, half2Y + half2H / 2, labelB, half2W);
+
+    grain1Svg = makeGrainSymbol(half1X + half1W / 2 + pill1W / 2 + 24, half1Y + half1H / 2, grain);
+    grain2Svg = makeGrainSymbol(half2X + half2W / 2 + pill2W / 2 + 24, half2Y + half2H / 2, grain);
+  }
+
+  // Split dimensions annotations on both halves
+  let splitDimsSvg = '';
+  if (isVert) {
+    const bDimY = rectY + rectH + 15;
+    splitDimsSvg = `
+      <!-- Bottom Left Split Dimension -->
+      <line x1="${rectX}" y1="${bDimY}" x2="${cutX1}" y2="${bDimY}" stroke="#000000" stroke-width="1"/>
+      <line x1="${rectX}" y1="${rectY + rectH}" x2="${rectX}" y2="${bDimY + 4}" stroke="#000000" stroke-width="0.8"/>
+      <line x1="${cutX1}" y1="${rectY + rectH}" x2="${cutX1}" y2="${bDimY + 4}" stroke="#000000" stroke-width="0.8"/>
+      <polyline points="${rectX + 5},${bDimY - 3} ${rectX},${bDimY} ${rectX + 5},${bDimY + 3}" fill="none" stroke="#000000" stroke-width="1"/>
+      <polyline points="${cutX1 - 5},${bDimY - 3} ${cutX1},${bDimY} ${cutX1 - 5},${bDimY + 3}" fill="none" stroke="#000000" stroke-width="1"/>
+      <rect x="${rectX + half1W / 2 - 20}" y="${bDimY - 7}" width="40" height="14" fill="#ffffff"/>
+      <text x="${rectX + half1W / 2}" y="${bDimY + 4}" font-family="'Outfit', 'Inter', sans-serif" font-size="11" font-weight="700" fill="#000000" text-anchor="middle">${strDim1}</text>
+
+      <!-- Bottom Right Split Dimension -->
+      <line x1="${cutX1}" y1="${bDimY}" x2="${rectX + rectW}" y2="${bDimY}" stroke="#000000" stroke-width="1"/>
+      <line x1="${rectX + rectW}" y1="${rectY + rectH}" x2="${rectX + rectW}" y2="${bDimY + 4}" stroke="#000000" stroke-width="0.8"/>
+      <polyline points="${cutX1 + 5},${bDimY - 3} ${cutX1},${bDimY} ${cutX1 + 5},${bDimY + 3}" fill="none" stroke="#000000" stroke-width="1"/>
+      <polyline points="${rectX + rectW - 5},${bDimY - 3} ${rectX + rectW},${bDimY} ${rectX + rectW - 5},${bDimY + 3}" fill="none" stroke="#000000" stroke-width="1"/>
+      <rect x="${cutX1 + half2W / 2 - 20}" y="${bDimY - 7}" width="40" height="14" fill="#ffffff"/>
+      <text x="${cutX1 + half2W / 2}" y="${bDimY + 4}" font-family="'Outfit', 'Inter', sans-serif" font-size="11" font-weight="700" fill="#000000" text-anchor="middle">${strDim2}</text>
+    `;
+  } else {
+    const rDimX = rectX + rectW + 15;
+    splitDimsSvg = `
+      <!-- Right Top Split Dimension -->
+      <line x1="${rDimX}" y1="${rectY}" x2="${rDimX}" y2="${cutY1}" stroke="#000000" stroke-width="1"/>
+      <line x1="${rectX + rectW}" y1="${rectY}" x2="${rDimX + 4}" y2="${rectY}" stroke="#000000" stroke-width="0.8"/>
+      <line x1="${rectX + rectW}" y1="${cutY1}" x2="${rDimX + 4}" y2="${cutY1}" stroke="#000000" stroke-width="0.8"/>
+      <polyline points="${rDimX - 3},${rectY + 5} ${rDimX},${rectY} ${rDimX + 3},${rectY + 5}" fill="none" stroke="#000000" stroke-width="1"/>
+      <polyline points="${rDimX - 3},${cutY1 - 5} ${rDimX},${cutY1} ${rDimX + 3},${cutY1 - 5}" fill="none" stroke="#000000" stroke-width="1"/>
+      <rect x="${rDimX - 7}" y="${rectY + half1H / 2 - 20}" width="14" height="40" fill="#ffffff"/>
+      <text x="${rDimX + 4}" y="${rectY + half1H / 2}" font-family="'Outfit', 'Inter', sans-serif" font-size="11" font-weight="700" fill="#000000" text-anchor="middle" transform="rotate(-90 ${rDimX + 4}, ${rectY + half1H / 2})">${strDim1}</text>
+
+      <!-- Right Bottom Split Dimension -->
+      <line x1="${rDimX}" y1="${cutY1}" x2="${rDimX}" y2="${rectY + rectH}" stroke="#000000" stroke-width="1"/>
+      <line x1="${rectX + rectW}" y1="${rectY + rectH}" x2="${rDimX + 4}" y2="${rectY + rectH}" stroke="#000000" stroke-width="0.8"/>
+      <polyline points="${rDimX - 3},${cutY1 + 5} ${rDimX},${cutY1} ${rDimX + 3},${cutY1 + 5}" fill="none" stroke="#000000" stroke-width="1"/>
+      <polyline points="${rDimX - 3},${rectY + rectH - 5} ${rDimX},${rectY + rectH} ${rDimX + 3},${rectY + rectH - 5}" fill="none" stroke="#000000" stroke-width="1"/>
+      <rect x="${rDimX - 7}" y="${cutY1 + half2H / 2 - 20}" width="14" height="40" fill="#ffffff"/>
+      <text x="${rDimX + 4}" y="${cutY1 + half2H / 2}" font-family="'Outfit', 'Inter', sans-serif" font-size="11" font-weight="700" fill="#000000" text-anchor="middle" transform="rotate(-90 ${rDimX + 4}, ${cutY1 + half2H / 2})">${strDim2}</text>
+    `;
+  }
+
+  return `
+    <svg class="ps-layup-diagram-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+      <!-- Top Dimension Line -->
+      <line x1="${rectX}" y1="${rectY - 12}" x2="${rectX + rectW}" y2="${rectY - 12}" stroke="#000000" stroke-width="1"/>
+      <line x1="${rectX}" y1="${rectY - 18}" x2="${rectX}" y2="${rectY}" stroke="#000000" stroke-width="0.8"/>
+      <line x1="${rectX + rectW}" y1="${rectY - 18}" x2="${rectX + rectW}" y2="${rectY}" stroke="#000000" stroke-width="0.8"/>
+      <polyline points="${rectX + 6},${rectY - 15} ${rectX},${rectY - 12} ${rectX + 6},${rectY - 9}" fill="none" stroke="#000000" stroke-width="1"/>
+      <polyline points="${rectX + rectW - 6},${rectY - 15} ${rectX + rectW},${rectY - 12} ${rectX + rectW - 6},${rectY - 9}" fill="none" stroke="#000000" stroke-width="1"/>
+      <rect x="${rectX + rectW / 2 - 24}" y="${rectY - 20}" width="48" height="16" fill="#ffffff"/>
+      <text x="${rectX + rectW / 2}" y="${rectY - 8}" font-family="'Outfit', 'Inter', sans-serif" font-size="13" font-weight="700" fill="#000000" text-anchor="middle">${strTotalL}</text>
+
+      <!-- Left Dimension Line -->
+      <line x1="${rectX - 12}" y1="${rectY}" x2="${rectX - 12}" y2="${rectY + rectH}" stroke="#000000" stroke-width="1"/>
+      <line x1="${rectX - 18}" y1="${rectY}" x2="${rectX}" y2="${rectY}" stroke="#000000" stroke-width="0.8"/>
+      <line x1="${rectX - 18}" y1="${rectY + rectH}" x2="${rectX}" y2="${rectY + rectH}" stroke="#000000" stroke-width="0.8"/>
+      <polyline points="${rectX - 15},${rectY + 6} ${rectX - 12},${rectY} ${rectX - 9},${rectY + 6}" fill="none" stroke="#000000" stroke-width="1"/>
+      <polyline points="${rectX - 15},${rectY + rectH - 6} ${rectX - 12},${rectY + rectH} ${rectX - 9},${rectY + rectH - 6}" fill="none" stroke="#000000" stroke-width="1"/>
+      <rect x="${rectX - 24}" y="${rectY + rectH / 2 - 14}" width="24" height="28" fill="#ffffff"/>
+      <text x="${rectX - 12}" y="${rectY + rectH / 2}" font-family="'Outfit', 'Inter', sans-serif" font-size="13" font-weight="700" fill="#000000" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 ${rectX - 12}, ${rectY + rectH / 2})">${strTotalW}</text>
+
+      <!-- Sheet Outer Outline -->
+      <rect x="${rectX}" y="${rectY}" width="${rectW}" height="${rectH}" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+
+      <!-- Dashed Cut Line -->
+      <line x1="${cutX1}" y1="${cutY1}" x2="${cutX2}" y2="${cutY2}" stroke="#000000" stroke-width="1.5" stroke-dasharray="5 3"/>
+
+      <!-- Pill Labels -->
+      ${pill1Svg}
+      ${pill2Svg}
+
+      <!-- Grain Direction Symbols -->
+      ${grain1Svg}
+      ${grain2Svg}
+
+      <!-- Split Halves Dimensions -->
+      ${splitDimsSvg}
+    </svg>
+  `;
+}
+
+// Open Lay-Up Wizard for a specific material and sheet
+function openLayupWizard(matKey, sheetIdx) {
+  const mat = state.materials[matKey];
+  if (!mat || !mat.sheets || !mat.sheets[sheetIdx]) return;
+  const sheet = mat.sheets[sheetIdx];
+
+  const isWhole = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
+  const rx = sheet.raw_max_x || mat.raw_max_x || 96.0;
+  const ry = sheet.raw_max_y || mat.raw_max_y || 48.0;
+  const calcFinX = calculateFinalDimension(sheet.net_length, rx);
+  const calcFinY = calculateFinalDimension(sheet.net_width, ry);
+
+  let currentLen, currentWid;
+  if (sheet.is_modified) {
+    currentLen = sheet.manual_final_length !== undefined ? sheet.manual_final_length : (sheet.final_length || rx);
+    currentWid = sheet.manual_final_width !== undefined ? sheet.manual_final_width : (sheet.final_width || ry);
+  } else if (isWhole) {
+    currentLen = rx;
+    currentWid = ry;
+  } else {
+    currentLen = (sheet.final_length && sheet.final_length < rx) ? sheet.final_length : (calcFinX > 0 ? calcFinX : rx);
+    currentWid = (sheet.final_width && sheet.final_width < ry) ? sheet.final_width : (calcFinY > 0 ? calcFinY : ry);
+  }
+
+  const sheetLength = Math.max(currentLen, currentWid);
+  const sheetWidth = Math.min(currentLen, currentWid);
+
+  const existing = sheet.custom_layup || {};
+  const splitOrientation = existing.splitOrientation || 'vertical';
+  const defaultSplitPos = splitOrientation === 'vertical' ? sheetLength / 2 : sheetWidth / 2;
+  const splitPos = existing.splitPos !== undefined ? existing.splitPos : defaultSplitPos;
+
+  currentLayupState = {
+    matKey: matKey,
+    sheetIdx: sheetIdx,
+    sheetLength: sheetLength,
+    sheetWidth: sheetWidth,
+    splitOrientation: splitOrientation,
+    splitPos: splitPos,
+    labelA: existing.labelA || (mat.face_material && mat.face_material.trim() ? mat.face_material.trim() : 'Laminate A'),
+    labelB: existing.labelB || (mat.backer_material && mat.backer_material.trim() ? mat.backer_material.trim() : 'Laminate B'),
+    grainDirection: mat.grain_direction || 'Horizontal',
+    useFeetInches: existing.useFeetInches || false,
+    precision: existing.precision || '16',
+    hasExisting: !!sheet.custom_layup
+  };
+
+  const modal = document.getElementById('layup-wizard-modal');
+  const title = document.getElementById('layup-modal-title');
+  const subtitle = document.getElementById('layup-modal-subtitle');
+  const radioVert = document.getElementById('radio-split-vertical');
+  const radioHorz = document.getElementById('radio-split-horizontal');
+  const checkFeetInches = document.getElementById('check-feet-inches');
+  const selectPrecision = document.getElementById('select-layup-precision');
+  const revertBtn = document.getElementById('btn-revert-layup');
+
+  if (title) title.textContent = `${mat.name} (Sheet ${sheetIdx + 1})`;
+  if (subtitle) subtitle.textContent = `Current Sheet Size: ${sheetLength.toFixed(3)}" x ${sheetWidth.toFixed(3)}" | Core Substrate: ${mat.core_substrate || 'PB'} | Grain: ${currentLayupState.grainDirection}`;
+  
+  if (radioVert) radioVert.checked = currentLayupState.splitOrientation === 'vertical';
+  if (radioHorz) radioHorz.checked = currentLayupState.splitOrientation === 'horizontal';
+  if (checkFeetInches) checkFeetInches.checked = currentLayupState.useFeetInches;
+  if (selectPrecision) selectPrecision.value = currentLayupState.precision;
+  if (revertBtn) revertBtn.style.display = currentLayupState.hasExisting ? 'block' : 'none';
+
+  if (modal) modal.classList.remove('hidden');
+
+  renderLayupKonvaCanvas();
+}
+
+function closeLayupModal() {
+  const modal = document.getElementById('layup-wizard-modal');
+  if (modal) modal.classList.add('hidden');
+  if (layupKonvaStage) {
+    layupKonvaStage.destroy();
+    layupKonvaStage = null;
+  }
+  currentLayupState = null;
+}
+
+// Render Interactive Konva Canvas
+function renderLayupKonvaCanvas() {
+  if (!currentLayupState || typeof Konva === 'undefined') return;
+
+  const container = document.getElementById('layup-konva-container');
+  if (!container) return;
+
+  if (layupKonvaStage) {
+    layupKonvaStage.destroy();
+    layupKonvaStage = null;
+  }
+  container.innerHTML = '';
+
+  const stageW = 640;
+  const stageH = 390;
+
+  layupKonvaStage = new Konva.Stage({
+    container: 'layup-konva-container',
+    width: stageW,
+    height: stageH
+  });
+
+  const layer = new Konva.Layer();
+  const stateObj = currentLayupState;
+
+  const totalL = stateObj.sheetLength || 96;
+  const totalW = stateObj.sheetWidth || 48;
+  const isVert = stateObj.splitOrientation === 'vertical';
+  const useFeetInches = stateObj.useFeetInches;
+
+  const marginL = 60;
+  const marginT = 45;
+  const marginR = 105;
+  const marginB = 55;
+
+  const maxDrawW = stageW - marginL - marginR;
+  const maxDrawH = stageH - marginT - marginB;
+
+  const scale = Math.min(maxDrawW / totalL, maxDrawH / totalW);
+  const sheetPxW = totalL * scale;
+  const sheetPxH = totalW * scale;
+
+  const originX = marginL + (maxDrawW - sheetPxW) / 2;
+  const originY = marginT + (maxDrawH - sheetPxH) / 2;
+
+  const maxSplit = isVert ? totalL : totalW;
+  stateObj.splitPos = Math.max(1, Math.min(maxSplit - 1, stateObj.splitPos));
+
+  // 1. Half A & Half B Rectangles
+  const rectHalfA = new Konva.Rect({
+    x: originX,
+    y: originY,
+    width: isVert ? stateObj.splitPos * scale : sheetPxW,
+    height: isVert ? sheetPxH : stateObj.splitPos * scale,
+    fill: '#1e3a5f',
+    stroke: 'rgba(56, 189, 248, 0.4)',
+    strokeWidth: 1
+  });
+
+  const rectHalfB = new Konva.Rect({
+    x: isVert ? originX + stateObj.splitPos * scale : originX,
+    y: isVert ? originY : originY + stateObj.splitPos * scale,
+    width: isVert ? sheetPxW - stateObj.splitPos * scale : sheetPxW,
+    height: isVert ? sheetPxH : sheetPxH - stateObj.splitPos * scale,
+    fill: '#244366',
+    stroke: 'rgba(56, 189, 248, 0.4)',
+    strokeWidth: 1
+  });
+
+  layer.add(rectHalfA);
+  layer.add(rectHalfB);
+
+  // Outer Sheet Boundary
+  const outerBorder = new Konva.Rect({
+    x: originX,
+    y: originY,
+    width: sheetPxW,
+    height: sheetPxH,
+    stroke: '#38bdf8',
+    strokeWidth: 1.5,
+    cornerRadius: 2,
+    listening: false
+  });
+  layer.add(outerBorder);
+
+  // 2. Grain Direction Symbols (Horizontal or Vertical)
+  let grain1Group = null;
+  let grain2Group = null;
+
+  function createKonvaGrain(dir) {
+    if (dir === 'No Grain') return null;
+    const gGroup = new Konva.Group({ listening: false });
+
+    if (dir === 'Vertical') {
+      // Vertical double-ended arrow
+      const line = new Konva.Line({
+        points: [0, -14, 0, 14],
+        stroke: '#94a3b8',
+        strokeWidth: 1.2
+      });
+      const tipTop = new Konva.Line({
+        points: [-4, -9, 0, -14, 4, -9],
+        stroke: '#94a3b8',
+        strokeWidth: 1.2
+      });
+      const tipBottom = new Konva.Line({
+        points: [-4, 9, 0, 14, 4, 9],
+        stroke: '#94a3b8',
+        strokeWidth: 1.2
+      });
+      const txt = new Konva.Text({
+        x: 12,
+        y: 12,
+        text: 'Grain',
+        fontSize: 9,
+        fontFamily: 'Inter',
+        fill: '#94a3b8',
+        rotation: -90
+      });
+      gGroup.add(line, tipTop, tipBottom, txt);
+    } else {
+      // Horizontal double-ended arrow (default)
+      const line = new Konva.Line({
+        points: [-14, 0, 14, 0],
+        stroke: '#94a3b8',
+        strokeWidth: 1.2
+      });
+      const tipLeft = new Konva.Line({
+        points: [-9, -4, -14, 0, -9, 4],
+        stroke: '#94a3b8',
+        strokeWidth: 1.2
+      });
+      const tipRight = new Konva.Line({
+        points: [9, -4, 14, 0, 9, 4],
+        stroke: '#94a3b8',
+        strokeWidth: 1.2
+      });
+      const txt = new Konva.Text({
+        x: -15,
+        y: -14,
+        width: 30,
+        text: 'Grain',
+        fontSize: 9,
+        fontFamily: 'Inter',
+        fill: '#94a3b8',
+        align: 'center'
+      });
+      gGroup.add(line, tipLeft, tipRight, txt);
+    }
+    return gGroup;
+  }
+
+  if (stateObj.grainDirection !== 'No Grain') {
+    grain1Group = createKonvaGrain(stateObj.grainDirection);
+    grain2Group = createKonvaGrain(stateObj.grainDirection);
+    if (grain1Group) layer.add(grain1Group);
+    if (grain2Group) layer.add(grain2Group);
+  }
+
+  // 3. Clickable Pill Labels
+  function createPill(labelText, isPillA) {
+    const textStr = labelText || (isPillA ? 'Laminate A' : 'Laminate B');
+    const pillGroup = new Konva.Group();
+
+    const measurer = new Konva.Text({ text: textStr, fontSize: 12, fontFamily: 'Outfit', fontStyle: 'bold' });
+    const textW = Math.max(36, measurer.width());
+    const pillW = textW + 24;
+    const pillH = 26;
+
+    const bg = new Konva.Rect({
+      x: -pillW / 2,
+      y: -pillH / 2,
+      width: pillW,
+      height: pillH,
+      fill: '#0f172a',
+      stroke: '#38bdf8',
+      strokeWidth: 1.5,
+      cornerRadius: 13,
+      shadowColor: 'rgba(0,0,0,0.5)',
+      shadowBlur: 6,
+      shadowOffset: { x: 0, y: 2 }
+    });
+
+    const txt = new Konva.Text({
+      x: -pillW / 2,
+      y: -6,
+      width: pillW,
+      text: textStr,
+      fontSize: 12,
+      fontFamily: 'Outfit',
+      fontStyle: 'bold',
+      fill: '#ffffff',
+      align: 'center'
+    });
+
+    pillGroup.add(bg, txt);
+
+    pillGroup.on('mouseover', () => {
+      bg.fill('#0284c7');
+      layupKonvaStage.container().style.cursor = 'pointer';
+      layer.batchDraw();
+    });
+
+    pillGroup.on('mouseout', () => {
+      bg.fill('#0f172a');
+      layupKonvaStage.container().style.cursor = 'default';
+      layer.batchDraw();
+    });
+
+    pillGroup.on('click tap', () => {
+      const targetLabel = isPillA ? 'Laminate A' : 'Laminate B';
+      const currentVal = isPillA ? stateObj.labelA : stateObj.labelB;
+      const newVal = prompt(`Rename ${targetLabel}:`, currentVal);
+      if (newVal !== null && newVal.trim()) {
+        const cleanStr = newVal.trim();
+        if (isPillA) stateObj.labelA = cleanStr;
+        else stateObj.labelB = cleanStr;
+        
+        txt.text(cleanStr);
+        const m = new Konva.Text({ text: cleanStr, fontSize: 12, fontFamily: 'Outfit', fontStyle: 'bold' });
+        const exactTextW = Math.max(36, m.width());
+        const exactPillW = exactTextW + 24;
+
+        bg.width(exactPillW);
+        bg.x(-exactPillW / 2);
+        txt.width(exactPillW);
+        txt.x(-exactPillW / 2);
+        updateDynamicVisuals(false);
+      }
+    });
+
+    return { group: pillGroup, bg: bg, txt: txt };
+  }
+
+  const pill1Obj = createPill(stateObj.labelA, true);
+  const pill2Obj = createPill(stateObj.labelB, false);
+  layer.add(pill1Obj.group, pill2Obj.group);
+
+  // 4. Fixed Dimension Lines (Top Length & Left Width)
+  const topDimY = originY - 18;
+  const topExt1 = new Konva.Line({ points: [originX, originY - 24, originX, originY], stroke: '#64748b', strokeWidth: 1 });
+  const topExt2 = new Konva.Line({ points: [originX + sheetPxW, originY - 24, originX + sheetPxW, originY], stroke: '#64748b', strokeWidth: 1 });
+  const topLine = new Konva.Line({ points: [originX, topDimY, originX + sheetPxW, topDimY], stroke: '#38bdf8', strokeWidth: 1 });
+  const topTick1 = new Konva.Line({ points: [originX - 4, topDimY + 4, originX + 4, topDimY - 4], stroke: '#38bdf8', strokeWidth: 1.5 });
+  const topTick2 = new Konva.Line({ points: [originX + sheetPxW - 4, topDimY + 4, originX + sheetPxW + 4, topDimY - 4], stroke: '#38bdf8', strokeWidth: 1.5 });
+  
+  const topText = new Konva.Text({
+    x: originX,
+    y: topDimY - 18,
+    width: sheetPxW,
+    text: formatLayupDimension(totalL, useFeetInches, stateObj.precision),
+    fontSize: 13,
+    fontFamily: 'Outfit',
+    fontStyle: 'bold',
+    fill: '#e2e8f0',
+    align: 'center'
+  });
+  layer.add(topExt1, topExt2, topLine, topTick1, topTick2, topText);
+
+  const leftDimX = originX - 18;
+  const leftExt1 = new Konva.Line({ points: [originX - 24, originY, originX, originY], stroke: '#64748b', strokeWidth: 1 });
+  const leftExt2 = new Konva.Line({ points: [originX - 24, originY + sheetPxH, originX, originY + sheetPxH], stroke: '#64748b', strokeWidth: 1 });
+  const leftLine = new Konva.Line({ points: [leftDimX, originY, leftDimX, originY + sheetPxH], stroke: '#38bdf8', strokeWidth: 1 });
+  const leftTick1 = new Konva.Line({ points: [leftDimX - 4, originY + 4, leftDimX + 4, originY - 4], stroke: '#38bdf8', strokeWidth: 1.5 });
+  const leftTick2 = new Konva.Line({ points: [leftDimX - 4, originY + sheetPxH + 4, leftDimX + 4, originY + sheetPxH - 4], stroke: '#38bdf8', strokeWidth: 1.5 });
+
+  const leftText = new Konva.Text({
+    x: leftDimX - 22,
+    y: originY + sheetPxH / 2 + 12,
+    text: formatLayupDimension(totalW, useFeetInches, stateObj.precision),
+    fontSize: 13,
+    fontFamily: 'Outfit',
+    fontStyle: 'bold',
+    fill: '#e2e8f0',
+    rotation: -90
+  });
+  layer.add(leftExt1, leftExt2, leftLine, leftTick1, leftTick2, leftText);
+
+  // 5. Interactive Split Cut Line & Drag Handle
+  const cutGroup = new Konva.Group({
+    draggable: true,
+    dragBoundFunc: function(pos) {
+      if (isVert) {
+        const minX = originX + 1 * scale;
+        const maxX = originX + (totalL - 1) * scale;
+        return {
+          x: Math.max(minX, Math.min(maxX, pos.x)),
+          y: originY
+        };
+      } else {
+        const minY = originY + 1 * scale;
+        const maxY = originY + (totalW - 1) * scale;
+        return {
+          x: originX,
+          y: Math.max(minY, Math.min(maxY, pos.y))
+        };
+      }
+    }
+  });
+
+  let cutLineShape, cutHandle;
+  if (isVert) {
+    cutLineShape = new Konva.Line({
+      points: [0, 0, 0, sheetPxH],
+      stroke: '#38bdf8',
+      strokeWidth: 2,
+      dash: [6, 4]
+    });
+
+    cutHandle = new Konva.Group({
+      x: 0,
+      y: sheetPxH / 2
+    });
+    const handleBg = new Konva.Rect({
+      x: -12,
+      y: -14,
+      width: 24,
+      height: 28,
+      fill: '#0284c7',
+      stroke: '#ffffff',
+      strokeWidth: 1.5,
+      cornerRadius: 6,
+      shadowColor: 'rgba(0,0,0,0.4)',
+      shadowBlur: 5
+    });
+    const handleTxt = new Konva.Text({
+      x: -12,
+      y: -5,
+      width: 24,
+      text: '◀▶',
+      fontSize: 9,
+      fill: '#ffffff',
+      align: 'center'
+    });
+    cutHandle.add(handleBg, handleTxt);
+  } else {
+    cutLineShape = new Konva.Line({
+      points: [0, 0, sheetPxW, 0],
+      stroke: '#38bdf8',
+      strokeWidth: 2,
+      dash: [6, 4]
+    });
+
+    cutHandle = new Konva.Group({
+      x: sheetPxW / 2,
+      y: 0
+    });
+    const handleBg = new Konva.Rect({
+      x: -14,
+      y: -12,
+      width: 28,
+      height: 24,
+      fill: '#0284c7',
+      stroke: '#ffffff',
+      strokeWidth: 1.5,
+      cornerRadius: 6,
+      shadowColor: 'rgba(0,0,0,0.4)',
+      shadowBlur: 5
+    });
+    const handleTxt = new Konva.Text({
+      x: -14,
+      y: -5,
+      width: 28,
+      text: '▲▼',
+      fontSize: 9,
+      fill: '#ffffff',
+      align: 'center'
+    });
+    cutHandle.add(handleBg, handleTxt);
+  }
+
+  cutGroup.add(cutLineShape, cutHandle);
+
+  cutGroup.on('mouseover', () => {
+    layupKonvaStage.container().style.cursor = isVert ? 'ew-resize' : 'ns-resize';
+  });
+  cutGroup.on('mouseout', () => {
+    layupKonvaStage.container().style.cursor = 'default';
+  });
+
+  cutGroup.on('dragmove', () => {
+    if (isVert) {
+      const curX = cutGroup.x();
+      stateObj.splitPos = Math.max(1, Math.min(totalL - 1, (curX - originX) / scale));
+    } else {
+      const curY = cutGroup.y();
+      stateObj.splitPos = Math.max(1, Math.min(totalW - 1, (curY - originY) / scale));
+    }
+    updateDynamicVisuals(true);
+  });
+
+  cutGroup.on('dragend', () => {
+    updateDynamicVisuals(false);
+  });
+
+  layer.add(cutGroup);
+
+  // 6. Split Dimension Annotations & Badges
+  let d1Line, d1Tick1, d1Tick2, d1Badge, d1Bg, d1Txt;
+  let d2Line, d2Tick1, d2Tick2, d2Badge, d2Bg, d2Txt;
+
+  const splitDimY = originY + sheetPxH + 18;
+  const splitDimX = originX + sheetPxW + 18;
+
+  if (isVert) {
+    d1Line = new Konva.Line({ points: [0, 0, 0, 0], stroke: '#38bdf8', strokeWidth: 1 });
+    d1Tick1 = new Konva.Line({ points: [originX - 4, splitDimY + 4, originX + 4, splitDimY - 4], stroke: '#38bdf8', strokeWidth: 1.5 });
+    d1Tick2 = new Konva.Line({ points: [0, 0, 0, 0], stroke: '#38bdf8', strokeWidth: 1.5 });
+    
+    d1Badge = new Konva.Group();
+    d1Bg = new Konva.Rect({ x: -40, y: -10, width: 80, height: 20, fill: '#0f172a', stroke: '#38bdf8', strokeWidth: 1, cornerRadius: 4 });
+    d1Txt = new Konva.Text({ x: -40, y: -5, width: 80, text: '', fontSize: 11, fontFamily: 'Outfit', fontStyle: 'bold', fill: '#38bdf8', align: 'center' });
+    d1Badge.add(d1Bg, d1Txt);
+
+    d1Badge.on('mouseover', () => { d1Bg.fill('#0284c7'); d1Txt.fill('#ffffff'); layupKonvaStage.container().style.cursor = 'pointer'; layer.batchDraw(); });
+    d1Badge.on('mouseout', () => { d1Bg.fill('#0f172a'); d1Txt.fill('#38bdf8'); layupKonvaStage.container().style.cursor = 'default'; layer.batchDraw(); });
+    d1Badge.on('click tap', () => {
+      const defaultStr = formatLayupDimension(stateObj.splitPos, false, stateObj.precision).replace(/"/g, '');
+      const val = prompt(`Enter exact length for left laminate (e.g. 45-5/8 or 45.625):`, defaultStr);
+      if (val !== null) {
+        const num = parseDimensionInput(val);
+        if (!isNaN(num) && num > 0 && num < totalL) {
+          stateObj.splitPos = num;
+          updateDynamicVisuals(false);
+        } else {
+          showToast('Invalid Input', `Value must be between 1 and ${formatLayupDimension(totalL - 1, false, stateObj.precision)}.`, 'warning');
+        }
+      }
+    });
+
+    d2Line = new Konva.Line({ points: [0, 0, 0, 0], stroke: '#38bdf8', strokeWidth: 1 });
+    d2Tick1 = new Konva.Line({ points: [0, 0, 0, 0], stroke: '#38bdf8', strokeWidth: 1.5 });
+    d2Tick2 = new Konva.Line({ points: [originX + sheetPxW - 4, splitDimY + 4, originX + sheetPxW + 4, splitDimY - 4], stroke: '#38bdf8', strokeWidth: 1.5 });
+
+    d2Badge = new Konva.Group();
+    d2Bg = new Konva.Rect({ x: -40, y: -10, width: 80, height: 20, fill: '#0f172a', stroke: '#38bdf8', strokeWidth: 1, cornerRadius: 4 });
+    d2Txt = new Konva.Text({ x: -40, y: -5, width: 80, text: '', fontSize: 11, fontFamily: 'Outfit', fontStyle: 'bold', fill: '#38bdf8', align: 'center' });
+    d2Badge.add(d2Bg, d2Txt);
+
+    d2Badge.on('mouseover', () => { d2Bg.fill('#0284c7'); d2Txt.fill('#ffffff'); layupKonvaStage.container().style.cursor = 'pointer'; layer.batchDraw(); });
+    d2Badge.on('mouseout', () => { d2Bg.fill('#0f172a'); d2Txt.fill('#38bdf8'); layupKonvaStage.container().style.cursor = 'default'; layer.batchDraw(); });
+    d2Badge.on('click tap', () => {
+      const curRight = totalL - stateObj.splitPos;
+      const defaultStr = formatLayupDimension(curRight, false, stateObj.precision).replace(/"/g, '');
+      const val = prompt(`Enter exact length for right laminate (e.g. 45-5/8 or 45.625):`, defaultStr);
+      if (val !== null) {
+        const num = parseDimensionInput(val);
+        if (!isNaN(num) && num > 0 && num < totalL) {
+          stateObj.splitPos = totalL - num;
+          updateDynamicVisuals(false);
+        } else {
+          showToast('Invalid Input', `Value must be between 1 and ${formatLayupDimension(totalL - 1, false, stateObj.precision)}.`, 'warning');
+        }
+      }
+    });
+
+    layer.add(d1Line, d1Tick1, d1Tick2, d1Badge, d2Line, d2Tick1, d2Tick2, d2Badge);
+  } else {
+    d1Line = new Konva.Line({ points: [0, 0, 0, 0], stroke: '#38bdf8', strokeWidth: 1 });
+    d1Tick1 = new Konva.Line({ points: [splitDimX - 4, originY + 4, splitDimX + 4, originY - 4], stroke: '#38bdf8', strokeWidth: 1.5 });
+    d1Tick2 = new Konva.Line({ points: [0, 0, 0, 0], stroke: '#38bdf8', strokeWidth: 1.5 });
+
+    d1Badge = new Konva.Group();
+    d1Bg = new Konva.Rect({ x: 4, y: -10, width: 78, height: 20, fill: '#0f172a', stroke: '#38bdf8', strokeWidth: 1, cornerRadius: 4 });
+    d1Txt = new Konva.Text({ x: 4, y: -5, width: 78, text: '', fontSize: 11, fontFamily: 'Outfit', fontStyle: 'bold', fill: '#38bdf8', align: 'center' });
+    d1Badge.add(d1Bg, d1Txt);
+
+    d1Badge.on('mouseover', () => { d1Bg.fill('#0284c7'); d1Txt.fill('#ffffff'); layupKonvaStage.container().style.cursor = 'pointer'; layer.batchDraw(); });
+    d1Badge.on('mouseout', () => { d1Bg.fill('#0f172a'); d1Txt.fill('#38bdf8'); layupKonvaStage.container().style.cursor = 'default'; layer.batchDraw(); });
+    d1Badge.on('click tap', () => {
+      const defaultStr = formatLayupDimension(stateObj.splitPos, false, stateObj.precision).replace(/"/g, '');
+      const val = prompt(`Enter exact width for top laminate (e.g. 24-1/2 or 24.5):`, defaultStr);
+      if (val !== null) {
+        const num = parseDimensionInput(val);
+        if (!isNaN(num) && num > 0 && num < totalW) {
+          stateObj.splitPos = num;
+          updateDynamicVisuals(false);
+        } else {
+          showToast('Invalid Input', `Value must be between 1 and ${formatLayupDimension(totalW - 1, false, stateObj.precision)}.`, 'warning');
+        }
+      }
+    });
+
+    d2Line = new Konva.Line({ points: [0, 0, 0, 0], stroke: '#38bdf8', strokeWidth: 1 });
+    d2Tick1 = new Konva.Line({ points: [0, 0, 0, 0], stroke: '#38bdf8', strokeWidth: 1.5 });
+    d2Tick2 = new Konva.Line({ points: [splitDimX - 4, originY + sheetPxH + 4, splitDimX + 4, originY + sheetPxH - 4], stroke: '#38bdf8', strokeWidth: 1.5 });
+
+    d2Badge = new Konva.Group();
+    d2Bg = new Konva.Rect({ x: 4, y: -10, width: 78, height: 20, fill: '#0f172a', stroke: '#38bdf8', strokeWidth: 1, cornerRadius: 4 });
+    d2Txt = new Konva.Text({ x: 4, y: -5, width: 78, text: '', fontSize: 11, fontFamily: 'Outfit', fontStyle: 'bold', fill: '#38bdf8', align: 'center' });
+    d2Badge.add(d2Bg, d2Txt);
+
+    d2Badge.on('mouseover', () => { d2Bg.fill('#0284c7'); d2Txt.fill('#ffffff'); layupKonvaStage.container().style.cursor = 'pointer'; layer.batchDraw(); });
+    d2Badge.on('mouseout', () => { d2Bg.fill('#0f172a'); d2Txt.fill('#38bdf8'); layupKonvaStage.container().style.cursor = 'default'; layer.batchDraw(); });
+    d2Badge.on('click tap', () => {
+      const curBottom = totalW - stateObj.splitPos;
+      const defaultStr = formatLayupDimension(curBottom, false, stateObj.precision).replace(/"/g, '');
+      const val = prompt(`Enter exact width for bottom laminate (e.g. 24-1/2 or 24.5):`, defaultStr);
+      if (val !== null) {
+        const num = parseDimensionInput(val);
+        if (!isNaN(num) && num > 0 && num < totalW) {
+          stateObj.splitPos = totalW - num;
+          updateDynamicVisuals(false);
+        } else {
+          showToast('Invalid Input', `Value must be between 1 and ${formatLayupDimension(totalW - 1, false, stateObj.precision)}.`, 'warning');
+        }
+      }
+    });
+
+    layer.add(d1Line, d1Tick1, d1Tick2, d1Badge, d2Line, d2Tick1, d2Tick2, d2Badge);
+  }
+
+  // 6b. Leader Line Shapes for Small Space Halves
+  const leader1Dot = new Konva.Circle({ radius: 3, fill: '#38bdf8', listening: false, visible: false });
+  const leader1Line = new Konva.Line({ points: [0,0,0,0,0,0], stroke: '#38bdf8', strokeWidth: 1.5, listening: false, visible: false });
+  const leader2Dot = new Konva.Circle({ radius: 3, fill: '#38bdf8', listening: false, visible: false });
+  const leader2Line = new Konva.Line({ points: [0,0,0,0,0,0], stroke: '#38bdf8', strokeWidth: 1.5, listening: false, visible: false });
+  layer.add(leader1Line, leader1Dot, leader2Line, leader2Dot);
+
+  // 7. Dynamic Updater (mutates shape properties smoothly without destroying stage)
+  function updateDynamicVisuals(isDragging) {
+    const curSplit = stateObj.splitPos;
+    const curSplitPx = curSplit * scale;
+    const p1W = pill1Obj.bg.width();
+    const p2W = pill2Obj.bg.width();
+
+    if (isVert) {
+      if (!isDragging) {
+        cutGroup.position({ x: originX + curSplitPx, y: originY });
+      }
+
+      rectHalfA.width(curSplitPx);
+      rectHalfB.x(originX + curSplitPx);
+      rectHalfB.width(sheetPxW - curSplitPx);
+
+      const isSmall1 = curSplitPx < p1W + 10;
+      const isSmall2 = (sheetPxW - curSplitPx) < p2W + 10;
+
+      // Half 1 Leader Line vs Centered Pill
+      if (isSmall1) {
+        const tx1 = originX + curSplitPx / 2;
+        const ty1 = originY + sheetPxH / 2;
+        const ex1 = tx1 - 22;
+        const ey1 = ty1 - 32;
+        const sx1 = ex1 - 28;
+
+        leader1Dot.position({ x: tx1, y: ty1 }).show();
+        leader1Line.points([tx1, ty1, ex1, ey1, sx1, ey1]).show();
+        pill1Obj.group.position({ x: sx1 - p1W / 2, y: ey1 });
+      } else {
+        leader1Dot.hide();
+        leader1Line.hide();
+        const pillOffset = (stateObj.grainDirection !== 'No Grain') ? -14 : 0;
+        pill1Obj.group.position({ x: originX + curSplitPx / 2, y: originY + sheetPxH / 2 + pillOffset });
+      }
+
+      // Half 2 Leader Line vs Centered Pill
+      if (isSmall2) {
+        const tx2 = originX + curSplitPx + (sheetPxW - curSplitPx) / 2;
+        const ty2 = originY + sheetPxH / 2;
+        const ex2 = tx2 + 22;
+        const ey2 = ty2 - 32;
+        const sx2 = ex2 + 28;
+
+        leader2Dot.position({ x: tx2, y: ty2 }).show();
+        leader2Line.points([tx2, ty2, ex2, ey2, sx2, ey2]).show();
+        pill2Obj.group.position({ x: sx2 + p2W / 2, y: ey2 });
+      } else {
+        leader2Dot.hide();
+        leader2Line.hide();
+        const pillOffset = (stateObj.grainDirection !== 'No Grain') ? -14 : 0;
+        pill2Obj.group.position({ x: originX + curSplitPx + (sheetPxW - curSplitPx) / 2, y: originY + sheetPxH / 2 + pillOffset });
+      }
+
+      if (grain1Group && grain2Group) {
+        grain1Group.position({ x: originX + curSplitPx / 2, y: originY + sheetPxH / 2 + 25 });
+        grain2Group.position({ x: originX + curSplitPx + (sheetPxW - curSplitPx) / 2, y: originY + sheetPxH / 2 + 25 });
+      }
+
+      d1Line.points([originX, splitDimY, originX + curSplitPx, splitDimY]);
+      d1Tick2.points([originX + curSplitPx - 4, splitDimY + 4, originX + curSplitPx + 4, splitDimY - 4]);
+      d1Badge.position({ x: originX + curSplitPx / 2, y: splitDimY + 12 });
+      d1Txt.text(formatLayupDimension(curSplit, useFeetInches, stateObj.precision));
+
+      d2Line.points([originX + curSplitPx, splitDimY, originX + sheetPxW, splitDimY]);
+      d2Tick1.points([originX + curSplitPx - 4, splitDimY + 4, originX + curSplitPx + 4, splitDimY - 4]);
+      d2Badge.position({ x: originX + curSplitPx + (sheetPxW - curSplitPx) / 2, y: splitDimY + 12 });
+      d2Txt.text(formatLayupDimension(totalL - curSplit, useFeetInches, stateObj.precision));
+    } else {
+      if (!isDragging) {
+        cutGroup.position({ x: originX, y: originY + curSplitPx });
+      }
+
+      rectHalfA.height(curSplitPx);
+      rectHalfB.y(originY + curSplitPx);
+      rectHalfB.height(sheetPxH - curSplitPx);
+
+      const isSmall1 = curSplitPx < 26;
+      const isSmall2 = (sheetPxH - curSplitPx) < 26;
+
+      // Half 1 Leader Line vs Centered Pill
+      if (isSmall1) {
+        const tx1 = originX + sheetPxW / 2;
+        const ty1 = originY + curSplitPx / 2;
+        const ex1 = tx1 + p1W / 2 + 20;
+        const ey1 = ty1 - 25;
+        const sx1 = ex1 + 25;
+
+        leader1Dot.position({ x: tx1, y: ty1 }).show();
+        leader1Line.points([tx1, ty1, ex1, ey1, sx1, ey1]).show();
+        pill1Obj.group.position({ x: sx1 + p1W / 2, y: ey1 });
+      } else {
+        leader1Dot.hide();
+        leader1Line.hide();
+        pill1Obj.group.position({ x: originX + sheetPxW / 2, y: originY + curSplitPx / 2 });
+      }
+
+      // Half 2 Leader Line vs Centered Pill
+      if (isSmall2) {
+        const tx2 = originX + sheetPxW / 2;
+        const ty2 = originY + curSplitPx + (sheetPxH - curSplitPx) / 2;
+        const ex2 = tx2 + p2W / 2 + 20;
+        const ey2 = ty2 + 25;
+        const sx2 = ex2 + 25;
+
+        leader2Dot.position({ x: tx2, y: ty2 }).show();
+        leader2Line.points([tx2, ty2, ex2, ey2, sx2, ey2]).show();
+        pill2Obj.group.position({ x: sx2 + p2W / 2, y: ey2 });
+      } else {
+        leader2Dot.hide();
+        leader2Line.hide();
+        pill2Obj.group.position({ x: originX + sheetPxW / 2, y: originY + curSplitPx + (sheetPxH - curSplitPx) / 2 });
+      }
+
+      if (grain1Group && grain2Group) {
+        grain1Group.position({ x: originX + sheetPxW / 2 + p1W / 2 + 28, y: originY + curSplitPx / 2 });
+        grain2Group.position({ x: originX + sheetPxW / 2 + p2W / 2 + 28, y: originY + curSplitPx + (sheetPxH - curSplitPx) / 2 });
+      }
+
+      d1Line.points([splitDimX, originY, splitDimX, originY + curSplitPx]);
+      d1Tick2.points([splitDimX - 4, originY + curSplitPx + 4, splitDimX + 4, originY + curSplitPx - 4]);
+      d1Badge.position({ x: splitDimX + 4, y: originY + curSplitPx / 2 });
+      d1Txt.text(formatLayupDimension(curSplit, useFeetInches, stateObj.precision));
+
+      d2Line.points([splitDimX, originY + curSplitPx, splitDimX, originY + sheetPxH]);
+      d2Tick1.points([splitDimX - 4, originY + curSplitPx + 4, splitDimX + 4, originY + curSplitPx - 4]);
+      d2Badge.position({ x: splitDimX + 4, y: originY + curSplitPx + (sheetPxH - curSplitPx) / 2 });
+      d2Txt.text(formatLayupDimension(totalW - curSplit, useFeetInches, stateObj.precision));
+    }
+
+    layer.batchDraw();
+  }
+
+  // Initial draw
+  updateDynamicVisuals(false);
+  layupKonvaStage.add(layer);
+}
+
+// Initialize Lay-Up Wizard Modal event listeners
+function initLayupWizardModalEvents() {
+  const closeBtn = document.getElementById('btn-close-layup-modal');
+  const cancelBtn = document.getElementById('btn-cancel-layup');
+  const confirmBtn = document.getElementById('btn-confirm-layup');
+  const revertBtn = document.getElementById('btn-revert-layup');
+  const radioVert = document.getElementById('radio-split-vertical');
+  const radioHorz = document.getElementById('radio-split-horizontal');
+  const checkFeetInches = document.getElementById('check-feet-inches');
+  const selectPrecision = document.getElementById('select-layup-precision');
+  const modal = document.getElementById('layup-wizard-modal');
+
+  if (closeBtn) closeBtn.addEventListener('click', closeLayupModal);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeLayupModal);
+
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeLayupModal();
+    });
+  }
+
+  if (radioVert) {
+    radioVert.addEventListener('change', () => {
+      if (radioVert.checked && currentLayupState) {
+        currentLayupState.splitOrientation = 'vertical';
+        currentLayupState.splitPos = currentLayupState.sheetLength / 2;
+        renderLayupKonvaCanvas();
+      }
+    });
+  }
+
+  if (radioHorz) {
+    radioHorz.addEventListener('change', () => {
+      if (radioHorz.checked && currentLayupState) {
+        currentLayupState.splitOrientation = 'horizontal';
+        currentLayupState.splitPos = currentLayupState.sheetWidth / 2;
+        renderLayupKonvaCanvas();
+      }
+    });
+  }
+
+  if (checkFeetInches) {
+    checkFeetInches.addEventListener('change', () => {
+      if (currentLayupState) {
+        currentLayupState.useFeetInches = checkFeetInches.checked;
+        renderLayupKonvaCanvas();
+      }
+    });
+  }
+
+  if (selectPrecision) {
+    selectPrecision.addEventListener('change', () => {
+      if (currentLayupState) {
+        currentLayupState.precision = selectPrecision.value;
+        renderLayupKonvaCanvas();
+      }
+    });
+  }
+
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', () => {
+      if (!currentLayupState) return;
+      const mat = state.materials[currentLayupState.matKey];
+      if (!mat || !mat.sheets || !mat.sheets[currentLayupState.sheetIdx]) return;
+      const sheet = mat.sheets[currentLayupState.sheetIdx];
+
+      sheet.custom_layup = {
+        splitOrientation: currentLayupState.splitOrientation,
+        splitPos: currentLayupState.splitPos,
+        sheetLength: currentLayupState.sheetLength,
+        sheetWidth: currentLayupState.sheetWidth,
+        labelA: currentLayupState.labelA,
+        labelB: currentLayupState.labelB,
+        grainDirection: currentLayupState.grainDirection,
+        useFeetInches: currentLayupState.useFeetInches,
+        precision: currentLayupState.precision,
+        runFileName: sheet.fileName || ''
+      };
+
+      closeLayupModal();
+      buildWizard();
+      updateDatabasePreview();
+      renderPullSheetReport();
+      saveSessionCache();
+      showToast('Custom Lay-Up Saved', `Saved custom lay-up for ${mat.name} (Sheet ${currentLayupState.sheetIdx + 1}).`, 'success');
+    });
+  }
+
+  if (revertBtn) {
+    revertBtn.addEventListener('click', () => {
+      if (!currentLayupState) return;
+      const mat = state.materials[currentLayupState.matKey];
+      if (!mat || !mat.sheets || !mat.sheets[currentLayupState.sheetIdx]) return;
+      const sheet = mat.sheets[currentLayupState.sheetIdx];
+
+      delete sheet.custom_layup;
+
+      closeLayupModal();
+      buildWizard();
+      updateDatabasePreview();
+      renderPullSheetReport();
+      saveSessionCache();
+      showToast('Lay-Up Reverted', `Reverted ${mat.name} (Sheet ${currentLayupState.sheetIdx + 1}) to original lay-up.`, 'info');
+    });
+  }
+}
+
+
