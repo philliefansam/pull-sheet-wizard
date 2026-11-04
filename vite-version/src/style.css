@@ -1464,6 +1464,24 @@ input:disabled, select:disabled {
   white-space: nowrap;
 }
 
+.local-folder-badge.badge-homag {
+  background: rgba(37, 99, 235, 0.25);
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.local-folder-badge.badge-beamsaw {
+  background: rgba(217, 119, 6, 0.25);
+  color: #fcd34d;
+  border-color: rgba(245, 158, 11, 0.5);
+}
+
+.local-folder-badge.badge-holzher {
+  background: rgba(147, 51, 234, 0.25);
+  color: #d8b4fe;
+  border-color: rgba(168, 85, 247, 0.5);
+}
+
 .local-folder-name {
   font-weight: 500;
   color: #f3f4f6;
