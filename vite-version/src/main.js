@@ -4,6 +4,7 @@ import { getSqlWasmBinary } from './sqlWasmBinary.js';
 
 const state = {
   pastedPath: '',
+  selectedDirectories: [], // Array of { id, name, handle }
   files: [],
   materials: {}, // Keyed by material name (subfolder)
   metadata: {
@@ -21,6 +22,9 @@ const state = {
   activeTab: 'tab-project-metadata',
   directoryHandle: null // Native file system handle
 };
+if (typeof window !== 'undefined') {
+  window.state = state;
+}
 
 const SHOP_CLEARANCE = 2.0;
 
@@ -244,29 +248,37 @@ function setupEventListeners() {
     });
   }
   
-  // Plus sign path button
-  document.getElementById('btn-add-path-field').addEventListener('click', () => {
-    const container = document.getElementById('paths-list-container');
-    const row = document.createElement('div');
-    row.className = 'path-input-row';
-    row.style.display = 'flex';
-    row.style.gap = '8px';
-    row.style.alignItems = 'center';
-    row.innerHTML = `
-      <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
-      <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      </button>
-    `;
-    container.appendChild(row);
-    
-    // Bind delete click
-    row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
-      row.remove();
-      saveSessionCache();
+  // Paste path row button
+  const btnAddPath = document.getElementById('btn-add-path-field');
+  if (btnAddPath) {
+    btnAddPath.addEventListener('click', () => {
+      addBlankPathRow();
     });
-    saveSessionCache();
-  });
+  }
+
+  // Bind initial path row events if present
+  const initialRow = document.querySelector('#paths-list-container .path-input-row');
+  if (initialRow) {
+    const input = initialRow.querySelector('.pasted-path-field');
+    const removeBtn = initialRow.querySelector('.btn-remove-path-field');
+    if (input) {
+      input.addEventListener('input', () => {
+        updateFolderListSummary();
+        saveSessionCache();
+      });
+    }
+    if (removeBtn) {
+      removeBtn.addEventListener('click', () => {
+        initialRow.remove();
+        const container = document.getElementById('paths-list-container');
+        if (container && container.children.length === 0) {
+          addBlankPathRow();
+        }
+        updateFolderListSummary();
+        saveSessionCache();
+      });
+    }
+  }
   
   // Settings inputs
   document.getElementById('settings-overcut').addEventListener('input', e => {
@@ -340,6 +352,8 @@ function handleResetProject() {
 
     // 2. Reset global state object
     const savedOperator = state.metadata ? state.metadata.operatorName : '';
+    state.selectedDirectories = [];
+    state.directoryHandle = null;
     state.files = [];
     state.scannedFiles = [];
     state.materials = {};
@@ -355,36 +369,8 @@ function handleResetProject() {
     // 3. Reset target folder path inputs
     const pathsContainer = document.getElementById('paths-list-container');
     if (pathsContainer) {
-      pathsContainer.innerHTML = `
-        <div class="path-input-row" style="display: flex; gap: 8px; align-items: center;">
-          <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="">
-          <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-          </button>
-        </div>
-      `;
-      const addBtn = document.getElementById('btn-add-path-field');
-      if (addBtn) {
-        addBtn.addEventListener('click', () => {
-          const row = document.createElement('div');
-          row.className = 'path-input-row';
-          row.style.display = 'flex';
-          row.style.gap = '8px';
-          row.style.alignItems = 'center';
-          row.innerHTML = `
-            <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
-            <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-            </button>
-          `;
-          pathsContainer.appendChild(row);
-          row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
-            row.remove();
-            saveSessionCache();
-          });
-          saveSessionCache();
-        });
-      }
+      pathsContainer.innerHTML = '';
+      addBlankPathRow();
     }
 
     // 4. Reset Project Details metadata input fields
@@ -522,110 +508,268 @@ async function handleGenerateDemo() {
   `;
 }
 
-// Handle Directory Scanning
+// Helper to update the folder count badge and Scan button text
+function updateFolderListSummary() {
+  const container = document.getElementById('paths-list-container');
+  const localRows = container ? container.querySelectorAll('.local-folder-row') : [];
+  const textFields = container ? container.querySelectorAll('.pasted-path-field') : [];
+  let pathCount = 0;
+  textFields.forEach(f => {
+    if (f.value.trim() && !f.value.startsWith('Local Folder:')) pathCount++;
+  });
+  const total = localRows.length + pathCount;
+  
+  const badge = document.getElementById('folder-count-badge');
+  if (badge) {
+    if (total > 0) {
+      badge.style.display = 'inline-block';
+      badge.textContent = `${total} ${total === 1 ? 'folder' : 'folders'}`;
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  const scanLabel = document.getElementById('btn-scan-label');
+  if (scanLabel) {
+    scanLabel.textContent = total > 0 ? `Scan Folders (${total})` : 'Scan Folders';
+  }
+}
+
+// Add a local folder row to UI
+function addLocalFolderRow(dirEntry) {
+  const container = document.getElementById('paths-list-container');
+  if (!container) return;
+
+  // If there is only one empty pasted-path-field row, remove it first
+  const existingRows = container.querySelectorAll('.path-input-row');
+  if (existingRows.length === 1 && !existingRows[0].classList.contains('local-folder-row')) {
+    const input = existingRows[0].querySelector('.pasted-path-field');
+    if (input && !input.value.trim()) {
+      existingRows[0].remove();
+    }
+  }
+
+  const row = document.createElement('div');
+  row.className = 'path-input-row local-folder-row';
+  row.dataset.dirId = dirEntry.id;
+
+  row.innerHTML = `
+    <div class="local-folder-card">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+      <span class="local-folder-badge">Local Folder</span>
+      <span class="local-folder-name" title="${dirEntry.name}">${dirEntry.name}</span>
+    </div>
+    <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this folder">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  `;
+
+  container.appendChild(row);
+
+  // Bind remove button
+  row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
+    state.selectedDirectories = state.selectedDirectories.filter(d => d.id !== dirEntry.id);
+    row.remove();
+    if (state.selectedDirectories.length > 0) {
+      state.directoryHandle = state.selectedDirectories[0].handle;
+      state.pastedPath = state.selectedDirectories[0].name;
+    } else {
+      state.directoryHandle = null;
+      if (container.children.length === 0) {
+        addBlankPathRow();
+      }
+    }
+    updateFolderListSummary();
+    saveSessionCache();
+  });
+
+  updateFolderListSummary();
+}
+if (typeof window !== 'undefined') {
+  window.addLocalFolderRow = addLocalFolderRow;
+}
+
+// Add a blank path input row
+function addBlankPathRow(val = '') {
+  const container = document.getElementById('paths-list-container');
+  if (!container) return;
+
+  const row = document.createElement('div');
+  row.className = 'path-input-row';
+  row.style.display = 'flex';
+  row.style.gap = '8px';
+  row.style.alignItems = 'center';
+
+  row.innerHTML = `
+    <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="${val}">
+    <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this row">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  `;
+
+  container.appendChild(row);
+
+  row.querySelector('.pasted-path-field').addEventListener('input', () => {
+    updateFolderListSummary();
+    saveSessionCache();
+  });
+
+  row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
+    row.remove();
+    if (container.children.length === 0) {
+      addBlankPathRow();
+    }
+    updateFolderListSummary();
+    saveSessionCache();
+  });
+
+  updateFolderListSummary();
+}
+if (typeof window !== 'undefined') {
+  window.addLocalFolderRow = addLocalFolderRow;
+}
+
+// Handle Directory Scanning across ALL selected folders and paths
 async function handleScan() {
-  const fields = document.querySelectorAll('.pasted-path-field');
-  // Support both multi-fields and comma/semicolon delimited entries in any field
-  const paths = [];
-  fields.forEach(el => {
+  const container = document.getElementById('paths-list-container');
+  const localRows = container ? container.querySelectorAll('.local-folder-row') : [];
+  const textFields = container ? container.querySelectorAll('.pasted-path-field') : [];
+
+  // 1. Gather all local directory handles in the order displayed
+  const handlesToScan = [];
+  localRows.forEach(row => {
+    const dirId = row.dataset.dirId;
+    const entry = state.selectedDirectories.find(d => d.id === dirId);
+    if (entry && entry.handle) {
+      handlesToScan.push(entry);
+    }
+  });
+
+  // 2. Gather all typed or pasted UNC paths
+  const pastedPaths = [];
+  textFields.forEach(el => {
     const val = el.value.trim();
-    if (val) {
+    if (val && !val.startsWith('Local Folder:')) {
       val.split(/[;,]/).map(p => p.trim()).filter(Boolean).forEach(p => {
-        if (!paths.includes(p)) paths.push(p);
+        if (!pastedPaths.includes(p)) pastedPaths.push(p);
       });
     }
   });
-  
-  if (paths.length === 0) {
-    showToast('Input Required', 'Please paste at least one target folder path or click "Select Project Folder".', 'warning');
+
+  const totalSources = handlesToScan.length + pastedPaths.length;
+  if (totalSources === 0) {
+    showToast('Input Required', 'Please select at least one local folder or paste a path.', 'warning');
     return;
   }
 
-  if (!isServerConnected) {
-    showToast('Companion Server Offline', 'Cannot scan pasted paths without companion server. Please click "Select Project Folder" to scan folders directly.', 'warning');
+  if (pastedPaths.length > 0 && !isServerConnected && handlesToScan.length === 0) {
+    showToast('Companion Server Offline', 'Cannot scan pasted paths without companion server. Please click "Select / Add Local Folder" to scan folders directly.', 'warning');
     return;
   }
-  
-  state.pastedPath = paths[0]; // Prefill metadata uses the first path
+
   const btn = document.getElementById('btn-scan');
   const progress = document.getElementById('scan-progress');
   const progressFill = progress.querySelector('.progress-bar-fill');
   const progressText = progress.querySelector('.progress-text');
-  
+
   btn.disabled = true;
   progress.classList.remove('hidden');
-  progressFill.style.width = '20%';
-  progressText.textContent = 'Scanning target directories...';
-  
+  progressFill.style.width = '15%';
+  progressText.textContent = `Scanning ${totalSources} target ${totalSources === 1 ? 'folder' : 'folders'}...`;
+
   try {
     state.files = [];
-    
-    // Fetch folders in parallel via companion server
-    const scanPromises = paths.map(async (p) => {
-      const res = await fetch(`${companionApiBase}/api/scan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: p })
+
+    // A. Read each selected local directory handle
+    for (let i = 0; i < handlesToScan.length; i++) {
+      const dirEntry = handlesToScan[i];
+      progressFill.style.width = `${Math.round(20 + ((i + 1) / totalSources) * 40)}%`;
+      progressText.textContent = `Reading local folder (${i + 1}/${handlesToScan.length}): ${dirEntry.name}...`;
+
+      const localFiles = await readDirectoryRecursive(dirEntry.handle, '');
+      localFiles.forEach(f => {
+        if (!f.scannedPath) f.scannedPath = dirEntry.name;
+        const uniqueKey = `${f.scannedPath}/${f.relativePath}`;
+        if (!state.files.some(existing => `${existing.scannedPath || ''}/${existing.relativePath}` === uniqueKey)) {
+          state.files.push(f);
+        }
       });
-      
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(`Scanning path "${p}" failed: ${err.message || 'Error'}`);
-      }
-      return res.json();
-    });
-    
-    progressFill.style.width = '50%';
-    progressText.textContent = 'Processing files...';
-    
-    const results = await Promise.all(scanPromises);
-    
-    // Combine all files from all scanned paths
-    results.forEach((data, index) => {
-      if (data.files && Array.isArray(data.files)) {
-        const currentScannedPath = paths[index] || state.pastedPath;
-        data.files.forEach(f => {
-          if (!f.scannedPath) f.scannedPath = currentScannedPath;
-          // Prevent duplicates by unique key combining scannedPath and relativePath
-          const uniqueKey = `${f.scannedPath}/${f.relativePath}`;
-          if (!state.files.some(existing => `${existing.scannedPath || ''}/${existing.relativePath}` === uniqueKey)) {
-            state.files.push(f);
-          }
+    }
+
+    // Set primary directory handle for saving outputs
+    if (handlesToScan.length > 0) {
+      state.directoryHandle = handlesToScan[0].handle;
+      state.pastedPath = handlesToScan[0].name;
+    }
+
+    // B. Scan pasted paths via companion server if present
+    if (pastedPaths.length > 0 && isServerConnected) {
+      progressText.textContent = 'Scanning server paths...';
+      const scanPromises = pastedPaths.map(async (p) => {
+        const res = await fetch(`${companionApiBase}/api/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: p })
         });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(`Scanning path "${p}" failed: ${err.message || 'Error'}`);
+        }
+        return res.json();
+      });
+
+      const results = await Promise.all(scanPromises);
+      results.forEach((data, index) => {
+        if (data.files && Array.isArray(data.files)) {
+          const currentScannedPath = pastedPaths[index] || state.pastedPath;
+          data.files.forEach(f => {
+            if (!f.scannedPath) f.scannedPath = currentScannedPath;
+            const uniqueKey = `${f.scannedPath}/${f.relativePath}`;
+            if (!state.files.some(existing => `${existing.scannedPath || ''}/${existing.relativePath}` === uniqueKey)) {
+              state.files.push(f);
+            }
+          });
+        }
+        if (data.username && !state.metadata.operatorName) {
+          state.metadata.operatorName = formatUsernameAsEngineer(data.username);
+          const opInput = document.getElementById('meta-operator-name');
+          if (opInput) opInput.value = state.metadata.operatorName;
+        }
+      });
+
+      if (!state.pastedPath && pastedPaths.length > 0) {
+        state.pastedPath = pastedPaths[0];
       }
-      if (data.username) {
-        state.metadata.operatorName = data.username;
-        document.getElementById('meta-operator-name').value = data.username;
-      }
-    });
-    
+    }
+
     progressFill.style.width = '75%';
     progressText.textContent = 'Grouping materials by machine and layup types...';
-    
+
     // Group files by material subfolder
     processScannedFiles();
-    
+
     progressFill.style.width = '100%';
     progressText.textContent = 'Scan complete!';
-    
+
     setTimeout(() => {
       progress.classList.add('hidden');
       btn.disabled = false;
       displayScanResults();
       buildWizard();
       updateDatabasePreview();
-      
-      // Auto prefill metadata from folder name if empty
+
+      // Auto prefill metadata from primary folder name if empty
       prefillMetadata();
-      
+
       // Reveal sections
       document.getElementById('section-metadata').classList.remove('hidden');
       document.getElementById('section-wizard').classList.remove('hidden');
       document.getElementById('section-export').classList.remove('hidden');
-      
-      showToast('Scan Successful', `Loaded ${Object.keys(state.materials).length} materials from target directories.`, 'success');
-    }, 500);
-    
+
+      showToast('Scan Successful', `Loaded ${Object.keys(state.materials).length} materials across ${totalSources} target ${totalSources === 1 ? 'folder' : 'folders'}.`, 'success');
+      saveSessionCache();
+    }, 400);
+
   } catch (e) {
     console.error(e);
     progress.classList.add('hidden');
@@ -634,7 +778,7 @@ async function handleScan() {
   }
 }
 
-// Handle Native Folder Selection (File System Access API)
+// Handle Native Folder Selection: adds a folder to list WITHOUT instantly scanning
 async function handleSelectFolder() {
   if (typeof window.showDirectoryPicker === 'undefined') {
     showToast('Not Supported', 'Your browser does not support native folder selection. Please use Chrome or Edge.', 'warning');
@@ -645,56 +789,43 @@ async function handleSelectFolder() {
     const dirHandle = await window.showDirectoryPicker({
       mode: 'readwrite'
     });
-    
-    state.directoryHandle = dirHandle;
-    state.pastedPath = dirHandle.name;
-    document.querySelector('.pasted-path-field').value = `Local: ${dirHandle.name}`;
-    
-    const progress = document.getElementById('scan-progress');
-    const progressFill = progress.querySelector('.progress-bar-fill');
-    const progressText = progress.querySelector('.progress-text');
-    const btn = document.getElementById('btn-select-folder');
-    
-    btn.disabled = true;
-    progress.classList.remove('hidden');
-    progressFill.style.width = '30%';
-    progressText.textContent = 'Reading local files recursively...';
-    
-    const fileList = await readDirectoryRecursive(dirHandle);
-    
-    progressFill.style.width = '70%';
-    progressText.textContent = 'Parsing file payloads...';
-    
-    state.files = fileList;
-    processScannedFiles();
-    
-    progressFill.style.width = '100%';
-    progressText.textContent = 'Scan complete!';
-    
-    setTimeout(() => {
-      progress.classList.add('hidden');
-      btn.disabled = false;
-      displayScanResults();
-      buildWizard();
-      updateDatabasePreview();
-      
-      // Prefill metadata
+
+    // Check if already in list
+    const alreadyExists = state.selectedDirectories.some(d => d.name === dirHandle.name);
+    if (alreadyExists) {
+      showToast('Already Added', `"${dirHandle.name}" is already in your selected folders list.`, 'info');
+      return;
+    }
+
+    const dirEntry = {
+      id: 'dir_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+      name: dirHandle.name,
+      handle: dirHandle
+    };
+
+    state.selectedDirectories.push(dirEntry);
+    state.directoryHandle = state.selectedDirectories[0].handle;
+    state.pastedPath = state.selectedDirectories[0].name;
+
+    // Add to UI without scanning immediately
+    addLocalFolderRow(dirEntry);
+
+    // Prefill metadata candidate from first folder if empty
+    if (!state.metadata.jobNumber) {
       prefillMetadata();
-      
-      document.getElementById('section-metadata').classList.remove('hidden');
-      document.getElementById('section-wizard').classList.remove('hidden');
-      document.getElementById('section-export').classList.remove('hidden');
-      
-      showToast('Scan Successful', `Loaded ${Object.keys(state.materials).length} materials from directory picker.`, 'success');
-    }, 500);
-    
+    }
+
+    showToast(
+      'Folder Added', 
+      `"${dirHandle.name}" added to list. You can add another folder or click "Scan Folders" to process.`, 
+      'success'
+    );
+    saveSessionCache();
+
   } catch (e) {
-    console.error(e);
-    const progress = document.getElementById('scan-progress');
-    if (progress) progress.classList.add('hidden');
-    document.getElementById('btn-select-folder').disabled = false;
     if (e.name !== 'AbortError') {
-      showToast('Scan Failed', 'Could not read directory files.', 'error');
+      console.error('Folder selection error:', e);
+      showToast('Selection Error', e.message || 'Could not select folder.', 'error');
     }
   }
 }
@@ -2757,9 +2888,12 @@ function handlePrintPullSheet() {
 // Cache session state so user input is preserved across navigation tabs and setting changes
 function saveSessionCache() {
   try {
+    const textPaths = Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value).filter(Boolean);
+    const localNames = state.selectedDirectories ? state.selectedDirectories.map(d => d.name) : [];
     const cacheData = {
       pastedPath: state.pastedPath,
-      pastedPathsList: Array.from(document.querySelectorAll('.pasted-path-field')).map(el => el.value),
+      pastedPathsList: textPaths,
+      localFolderNames: localNames,
       metadata: state.metadata,
       settings: state.settings,
       materials: state.materials,
@@ -2797,48 +2931,12 @@ function restoreSessionCache() {
       const container = document.getElementById('paths-list-container');
       if (container) {
         container.innerHTML = '';
-        cacheData.pastedPathsList.forEach((pathVal, idx) => {
-          const row = document.createElement('div');
-          row.className = 'path-input-row';
-          row.style.display = 'flex';
-          row.style.gap = '8px';
-          row.style.alignItems = 'center';
-          row.innerHTML = `
-            <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="${pathVal}">
-            ${idx === 0 ? `
-              <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-              </button>
-            ` : `
-              <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-              </button>
-            `}
-          `;
-          container.appendChild(row);
-          if (idx === 0) {
-            row.querySelector('#btn-add-path-field').addEventListener('click', () => {
-              const newRow = document.createElement('div');
-              newRow.className = 'path-input-row';
-              newRow.style.display = 'flex';
-              newRow.style.gap = '8px';
-              newRow.style.alignItems = 'center';
-              newRow.innerHTML = `
-                <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;">
-                <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                </button>
-              `;
-              container.appendChild(newRow);
-              newRow.querySelector('.btn-remove-path-field').addEventListener('click', () => { newRow.remove(); saveSessionCache(); });
-              saveSessionCache();
-            });
-          } else {
-            row.querySelector('.btn-remove-path-field').addEventListener('click', () => { row.remove(); saveSessionCache(); });
-          }
+        cacheData.pastedPathsList.forEach(pathVal => {
+          addBlankPathRow(pathVal);
         });
       }
     }
+    updateFolderListSummary();
 
     if (cacheData.files && Array.isArray(cacheData.files) && cacheData.files.length > 0) {
       state.files = cacheData.files;

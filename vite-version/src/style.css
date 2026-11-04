@@ -1424,3 +1424,52 @@ input:disabled, select:disabled {
     padding: 1px 6px;
   }
 }
+
+/* Local Folder Selection Card */
+.local-folder-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.local-folder-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  background: #1e293b;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-height: 40px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: border-color 0.15s ease;
+}
+
+.local-folder-card:hover {
+  border-color: rgba(96, 165, 250, 0.8);
+}
+
+.local-folder-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: rgba(37, 99, 235, 0.2);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.local-folder-name {
+  font-weight: 500;
+  color: #f3f4f6;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -87,26 +87,34 @@
         <section class="card scan-section" id="section-scan">
           <div class="card-header">
             <h3>Directory Scanning Engine</h3>
-            <p>Scan target directories to isolate materials and retrieve raw part boundaries</p>
+            <p>Select one or more project folders or paste network UNC paths, then click Scan Folders.</p>
           </div>
           <div class="card-body">
             <div class="input-group">
-              <label>Target Folder / Network UNC Paths</label>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label style="margin-bottom: 0;">Target Folders & Nest Directories</label>
+                <span id="folder-count-badge" class="badge-count" style="display: none; font-size: 11px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); padding: 2px 8px; border-radius: 12px; font-weight: 600;">0 folders</span>
+              </div>
               <div id="paths-list-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
                 <div class="path-input-row" style="display: flex; gap: 8px; align-items: center;">
                   <input type="text" class="pasted-path-field" placeholder="e.g. Z:\Homag CNC\Empire Office\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="">
-                  <button id="btn-add-path-field" class="btn btn-secondary" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Add another folder path">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                  <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
                   </button>
                 </div>
               </div>
-              <div style="display: flex; gap: 12px;">
-                <button id="btn-scan" class="btn btn-primary" style="flex: 1;">
-                  Scan Server Paths
+              <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button id="btn-select-folder" class="btn btn-secondary" style="display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>
+                  <span>Select / Add Local Folder</span>
                 </button>
-                <button id="btn-select-folder" class="btn btn-secondary" style="display: flex; align-items: center; justify-content: center; gap: 6px;">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                  Select Local Folder
+                <button id="btn-add-path-field" class="btn btn-secondary" style="display: flex; align-items: center; justify-content: center; gap: 6px;" title="Add an input row to paste a network UNC path">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                  <span>Paste Path Row</span>
+                </button>
+                <button id="btn-scan" class="btn btn-primary" style="flex: 1; min-width: 180px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  <span id="btn-scan-label">Scan Folders</span>
                 </button>
               </div>
             </div>
