@@ -1,4 +1,4 @@
-import './sql-wasm.js';
+import initSqlJs from './sql-wasm.js';
 import './konva.min.js';
 import { getSqlWasmBinary } from './sqlWasmBinary.js';
 
@@ -85,7 +85,9 @@ async function checkServerConnection(silent = false) {
   const statusEl = document.getElementById('connection-status');
   if (!statusEl) return;
 
-  const endpoints = ['http://localhost:9994/api/status', '/api/status'];
+  const endpoints = (typeof window !== 'undefined' && window.location.protocol === 'file:')
+    ? ['http://localhost:9994/api/status']
+    : ['http://localhost:9994/api/status', '/api/status'];
   let connected = false;
   let activeBase = '';
   let serverData = null;
@@ -141,11 +143,18 @@ async function checkServerConnection(silent = false) {
 // Load SQL.js WebAssembly completely offline
 async function loadSqlWasm() {
   try {
-    if (typeof initSqlJs !== 'undefined') {
+    const fn = (typeof initSqlJs === 'function') 
+      ? initSqlJs 
+      : ((typeof window !== 'undefined' && typeof window.initSqlJs === 'function') ? window.initSqlJs : null);
+
+    if (fn) {
       const wasmBinary = getSqlWasmBinary();
-      state.SQL = await initSqlJs({
+      state.SQL = await fn({
         wasmBinary: wasmBinary
       });
+      if (typeof window !== 'undefined') {
+        window.SQL = state.SQL;
+      }
       console.log('SQL.js initialized successfully (offline inlined WASM).');
     } else {
       showToast('WASM Error', 'SQL.js library failed to load.', 'error');

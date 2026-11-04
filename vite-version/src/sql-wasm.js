@@ -12,6 +12,7 @@
 
 // TODO: Make this not declare a global if used in the browser
 var initSqlJsPromise = undefined;
+var module;
 
 var initSqlJs = function (moduleConfig) {
 
@@ -181,14 +182,8 @@ function Zc(){function a(){if(!Xc&&(Xc=!0,e.calledRun=!0,!Ka)){e.noFSInit||ac||(
 
 // This bit below is copied almost exactly from what you get when you use the MODULARIZE=1 flag with emcc
 // However, we don't want to use the emcc modularization. See shell-pre.js
-if (typeof exports === 'object' && typeof module === 'object'){
-    module.exports = initSqlJs;
-    // This will allow the module to be used in ES6 or CommonJS
-    module.exports.default = initSqlJs;
+if (typeof window !== 'undefined') {
+    window.initSqlJs = initSqlJs;
 }
-else if (typeof define === 'function' && define['amd']) {
-    define([], function() { return initSqlJs; });
-}
-else if (typeof exports === 'object'){
-    exports["Module"] = initSqlJs;
-}
+
+export default initSqlJs;
