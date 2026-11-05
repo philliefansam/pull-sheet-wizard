@@ -97,9 +97,14 @@
               </div>
               <div id="paths-list-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
                 <div class="path-input-row" style="display: flex; gap: 8px; align-items: center;">
-                  <input type="text" class="pasted-path-field" placeholder="e.g. Z:\Homag CNC\Empire Office\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="">
-                  <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this path">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  <div class="folder-path-input-wrapper">
+                    <div class="folder-path-icon" title="Project Path">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                    </div>
+                    <input type="text" class="pasted-path-field folder-path-field" placeholder="e.g. Z:\Homag CNC\Empire Office\180577-1 Criteo Corp - Reception Desk" value="">
+                  </div>
+                  <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: 44px;" title="Remove this path">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
                   </button>
                 </div>
               </div>

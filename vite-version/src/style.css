@@ -1426,68 +1426,96 @@ input:disabled, select:disabled {
 }
 
 /* Local Folder Selection Card */
-.local-folder-row {
+/* Folder Path Input Row - Unified with App Design System */
+.path-input-row {
   display: flex;
   gap: 8px;
   align-items: center;
+  width: 100%;
   animation: fadeIn 0.15s ease-out;
 }
 
-.local-folder-card {
+.folder-path-input-wrapper {
   display: flex;
   align-items: center;
   gap: 10px;
   flex: 1;
-  background: #1e293b;
-  border: 1px solid rgba(59, 130, 246, 0.4);
-  border-radius: 6px;
-  padding: 8px 12px;
-  min-height: 40px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  transition: border-color 0.15s ease;
+  background-color: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 4px 12px;
+  min-height: 44px;
+  transition: var(--transition-smooth);
 }
 
-.local-folder-card:hover {
-  border-color: rgba(96, 165, 250, 0.8);
+.folder-path-input-wrapper:hover {
+  border-color: var(--text-muted);
 }
 
-.local-folder-badge {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  background: rgba(37, 99, 235, 0.2);
-  color: #93c5fd;
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  padding: 2px 7px;
+.folder-path-input-wrapper:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.folder-path-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.folder-path-input-wrapper:focus-within .folder-path-icon {
+  color: var(--primary);
+}
+
+.folder-path-field {
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  color: var(--text-primary) !important;
+  font-family: var(--font-primary) !important;
+  font-size: 14px !important;
+  padding: 8px 0 !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+.folder-path-field::placeholder {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.folder-path-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
   border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
   letter-spacing: 0.5px;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.local-folder-badge.badge-homag {
-  background: rgba(37, 99, 235, 0.25);
-  color: #93c5fd;
-  border-color: rgba(59, 130, 246, 0.5);
+.folder-path-badge.badge-homag {
+  background-color: rgba(156, 39, 176, 0.15);
+  color: #e040fb;
 }
 
-.local-folder-badge.badge-beamsaw {
-  background: rgba(217, 119, 6, 0.25);
-  color: #fcd34d;
-  border-color: rgba(245, 158, 11, 0.5);
+.folder-path-badge.badge-beamsaw {
+  background-color: rgba(255, 152, 0, 0.15);
+  color: #ff9100;
 }
 
-.local-folder-badge.badge-holzher {
-  background: rgba(147, 51, 234, 0.25);
-  color: #d8b4fe;
-  border-color: rgba(168, 85, 247, 0.5);
+.folder-path-badge.badge-holzher {
+  background-color: rgba(3, 169, 244, 0.15);
+  color: #00b0ff;
 }
 
-.local-folder-name {
-  font-weight: 500;
-  color: #f3f4f6;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.folder-path-badge.badge-default {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
 }

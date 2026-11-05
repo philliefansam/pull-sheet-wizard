@@ -521,10 +521,10 @@ async function handleGenerateDemo() {
 function updateFolderListSummary() {
   const container = document.getElementById('paths-list-container');
   const localRows = container ? container.querySelectorAll('.local-folder-row') : [];
-  const textFields = container ? container.querySelectorAll('.pasted-path-field') : [];
+  const unlinkedFields = container ? container.querySelectorAll('.path-input-row:not(.local-folder-row) .pasted-path-field') : [];
   let pathCount = 0;
-  textFields.forEach(f => {
-    if (f.value.trim() && !f.value.startsWith('Local Folder:')) pathCount++;
+  unlinkedFields.forEach(f => {
+    if (f.value.trim()) pathCount++;
   });
   const total = localRows.length + pathCount;
   
@@ -544,55 +544,158 @@ function updateFolderListSummary() {
   }
 }
 
+// Helper to retrieve the parent directory prefix from other inputs or localStorage
+function getParentPathPrefix(folderName = '', machineHint = '') {
+  let prefix = '';
+  const existingInputs = document.querySelectorAll('#paths-list-container .pasted-path-field');
+  for (const inp of existingInputs) {
+    const val = inp.value.trim();
+    if (val.includes('\\')) {
+      const lastSlash = val.lastIndexOf('\\');
+      if (lastSlash > 0) {
+        prefix = val.substring(0, lastSlash);
+        break;
+      }
+    } else if (val.includes('/')) {
+      const lastSlash = val.lastIndexOf('/');
+      if (lastSlash > 0) {
+        prefix = val.substring(0, lastSlash);
+        break;
+      }
+    }
+  }
+
+  if (!prefix) {
+    try {
+      prefix = localStorage.getItem('ps_wizard_recent_root') || '';
+    } catch (_) {}
+  }
+
+  if (prefix) {
+    if (machineHint === 'Beam Saw' && /homag/i.test(prefix)) {
+      prefix = prefix.replace(/Homag\s*CNC/i, 'Holzher Cut 6120 (BEAM SAW)').replace(/Homag/i, 'Holzher Cut 6120 (BEAM SAW)');
+    } else if (machineHint === 'Homag CNC' && /beam\s*saw|cut\s*6120/i.test(prefix)) {
+      prefix = prefix.replace(/Holzher Cut 6120 \(BEAM SAW\)/i, 'Homag CNC')
+                     .replace(/Holzher Cut 6120/i, 'Homag CNC')
+                     .replace(/Beam\s*Saw/i, 'Homag CNC')
+                     .replace(/beamsaw/i, 'Homag CNC');
+    }
+  }
+
+  return prefix ? prefix.replace(/[\\/]$/, '') : '';
+}
+if (typeof window !== 'undefined') {
+  window.getParentPathPrefix = getParentPathPrefix;
+}
+
+// Generate machine badge HTML
+function getMachineBadgeHtml(machineHint) {
+  if (machineHint === 'Homag CNC' || machineHint === 'Homag') {
+    return `<span class="folder-path-badge badge-homag">Homag CNC</span>`;
+  } else if (machineHint === 'Beam Saw' || (machineHint && machineHint.includes('Beam Saw'))) {
+    return `<span class="folder-path-badge badge-beamsaw">Beam Saw</span>`;
+  } else if (machineHint === 'Holzher CNC' || (machineHint && machineHint.includes('Holzher'))) {
+    return `<span class="folder-path-badge badge-holzher">Holzher CNC</span>`;
+  }
+  return '';
+}
+
+// Dynamically update the machine badge in a path row
+function updateRowMachineBadge(row, machineHint) {
+  const wrapper = row.querySelector('.folder-path-input-wrapper');
+  if (!wrapper) return;
+  const existingBadge = wrapper.querySelector('.folder-path-badge');
+  if (existingBadge) existingBadge.remove();
+
+  const badgeMarkup = getMachineBadgeHtml(machineHint);
+  if (badgeMarkup) {
+    const temp = document.createElement('div');
+    temp.innerHTML = badgeMarkup;
+    const newBadge = temp.firstElementChild;
+    const icon = wrapper.querySelector('.folder-path-icon');
+    if (icon && icon.nextSibling) {
+      wrapper.insertBefore(newBadge, icon.nextSibling);
+    } else {
+      wrapper.insertBefore(newBadge, wrapper.firstChild);
+    }
+  }
+}
+
 // Add a local folder row to UI
 function addLocalFolderRow(dirEntry) {
   const container = document.getElementById('paths-list-container');
   if (!container) return;
 
-  // If there is only one empty pasted-path-field row, remove it first
+  // Determine full path to display
+  if (!dirEntry.fullPath) {
+    const parentPrefix = getParentPathPrefix(dirEntry.name, dirEntry.machineHint);
+    dirEntry.fullPath = parentPrefix ? `${parentPrefix}\\${dirEntry.name}` : dirEntry.name;
+  }
+
+  // If there is only one empty row not yet linked to a directory, reuse it
   const existingRows = container.querySelectorAll('.path-input-row');
-  if (existingRows.length === 1 && !existingRows[0].classList.contains('local-folder-row')) {
+  let targetRow = null;
+  if (existingRows.length === 1 && !existingRows[0].dataset.dirId) {
     const input = existingRows[0].querySelector('.pasted-path-field');
     if (input && !input.value.trim()) {
-      existingRows[0].remove();
+      targetRow = existingRows[0];
     }
   }
 
-  const row = document.createElement('div');
+  const row = targetRow || document.createElement('div');
   row.className = 'path-input-row local-folder-row';
   row.dataset.dirId = dirEntry.id;
 
-  const machineHint = dirEntry.machineHint || '';
-  let badgeClass = 'badge-default';
-  let badgeLabel = 'Local Folder';
-  let iconStroke = '#60a5fa';
-
-  if (machineHint === 'Homag CNC' || machineHint === 'Homag') {
-    badgeClass = 'badge-homag';
-    badgeLabel = 'Homag CNC';
-    iconStroke = '#60a5fa';
-  } else if (machineHint === 'Beam Saw' || machineHint.includes('Beam Saw')) {
-    badgeClass = 'badge-beamsaw';
-    badgeLabel = 'Beam Saw';
-    iconStroke = '#f59e0b';
-  } else if (machineHint === 'Holzher CNC' || machineHint.includes('Holzher')) {
-    badgeClass = 'badge-holzher';
-    badgeLabel = 'Holzher CNC';
-    iconStroke = '#c084fc';
-  }
+  const badgeHtml = getMachineBadgeHtml(dirEntry.machineHint);
 
   row.innerHTML = `
-    <div class="local-folder-card">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${iconStroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-      <span class="local-folder-badge ${badgeClass}">${badgeLabel}</span>
-      <span class="local-folder-name" title="${dirEntry.name}">${dirEntry.name}</span>
+    <div class="folder-path-input-wrapper">
+      <div class="folder-path-icon" title="Local Folder">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+      </div>
+      ${badgeHtml}
+      <input type="text" class="pasted-path-field folder-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" value="${dirEntry.fullPath}">
     </div>
-    <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this folder">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: 44px;" title="Remove this folder">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
   `;
 
-  container.appendChild(row);
+  if (!targetRow) {
+    container.appendChild(row);
+  }
+
+  // Bind input editing
+  const inputEl = row.querySelector('.pasted-path-field');
+  inputEl.addEventListener('input', (e) => {
+    const val = e.target.value.trim();
+    dirEntry.fullPath = val;
+    if (val.includes('\\')) {
+      const lastSlash = val.lastIndexOf('\\');
+      if (lastSlash > 0) {
+        try { localStorage.setItem('ps_wizard_recent_root', val.substring(0, lastSlash)); } catch (_) {}
+      }
+    }
+
+    // Auto-detect machine from edited path if keyword is present
+    const lower = val.toLowerCase();
+    let detectedFromPath = null;
+    if (lower.includes('homag')) {
+      detectedFromPath = 'Homag CNC';
+    } else if (lower.includes('beam saw') || lower.includes('beamsaw') || lower.includes('cut 6120')) {
+      detectedFromPath = 'Beam Saw';
+    } else if (lower.includes('holzher') || lower.includes('dynestic')) {
+      detectedFromPath = 'Holzher CNC';
+    }
+
+    if (detectedFromPath && detectedFromPath !== dirEntry.machineHint) {
+      dirEntry.machineHint = detectedFromPath;
+      updateRowMachineBadge(row, detectedFromPath);
+    }
+
+    updateFolderListSummary();
+    saveSessionCache();
+  });
 
   // Bind remove button
   row.querySelector('.btn-remove-path-field').addEventListener('click', () => {
@@ -600,7 +703,7 @@ function addLocalFolderRow(dirEntry) {
     row.remove();
     if (state.selectedDirectories.length > 0) {
       state.directoryHandle = state.selectedDirectories[0].handle;
-      state.pastedPath = state.selectedDirectories[0].name;
+      state.pastedPath = state.selectedDirectories[0].fullPath || state.selectedDirectories[0].name;
     } else {
       state.directoryHandle = null;
       if (container.children.length === 0) {
@@ -612,6 +715,7 @@ function addLocalFolderRow(dirEntry) {
   });
 
   updateFolderListSummary();
+  saveSessionCache();
 }
 if (typeof window !== 'undefined') {
   window.addLocalFolderRow = addLocalFolderRow;
@@ -624,20 +728,29 @@ function addBlankPathRow(val = '') {
 
   const row = document.createElement('div');
   row.className = 'path-input-row';
-  row.style.display = 'flex';
-  row.style.gap = '8px';
-  row.style.alignItems = 'center';
 
   row.innerHTML = `
-    <input type="text" class="pasted-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" style="flex: 1;" value="${val}">
-    <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: auto;" title="Remove this row">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    <div class="folder-path-input-wrapper">
+      <div class="folder-path-icon" title="Project Path">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+      </div>
+      <input type="text" class="pasted-path-field folder-path-field" placeholder="e.g. Z:\\Homag CNC\\Empire Office\\180577-1 Criteo Corp - Reception Desk" value="${val}">
+    </div>
+    <button class="btn btn-secondary btn-remove-path-field" style="padding: 10px 14px; font-weight: bold; height: 44px;" title="Remove this row">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
   `;
 
   container.appendChild(row);
 
-  row.querySelector('.pasted-path-field').addEventListener('input', () => {
+  row.querySelector('.pasted-path-field').addEventListener('input', (e) => {
+    const v = e.target.value.trim();
+    if (v.includes('\\')) {
+      const lastSlash = v.lastIndexOf('\\');
+      if (lastSlash > 0) {
+        try { localStorage.setItem('ps_wizard_recent_root', v.substring(0, lastSlash)); } catch (_) {}
+      }
+    }
     updateFolderListSummary();
     saveSessionCache();
   });
@@ -661,7 +774,7 @@ if (typeof window !== 'undefined') {
 async function handleScan() {
   const container = document.getElementById('paths-list-container');
   const localRows = container ? container.querySelectorAll('.local-folder-row') : [];
-  const textFields = container ? container.querySelectorAll('.pasted-path-field') : [];
+  const textFields = container ? container.querySelectorAll('.path-input-row:not(.local-folder-row) .pasted-path-field') : [];
 
   // 1. Gather all local directory handles in the order displayed
   const handlesToScan = [];
@@ -711,12 +824,13 @@ async function handleScan() {
     // A. Read each selected local directory handle
     for (let i = 0; i < handlesToScan.length; i++) {
       const dirEntry = handlesToScan[i];
+      const assignedPath = dirEntry.fullPath || dirEntry.name;
       progressFill.style.width = `${Math.round(20 + ((i + 1) / totalSources) * 40)}%`;
-      progressText.textContent = `Reading local folder (${i + 1}/${handlesToScan.length}): ${dirEntry.name}...`;
+      progressText.textContent = `Reading local folder (${i + 1}/${handlesToScan.length}): ${assignedPath}...`;
 
       const localFiles = await readDirectoryRecursive(dirEntry.handle, '');
       localFiles.forEach(f => {
-        if (!f.scannedPath) f.scannedPath = dirEntry.name;
+        if (!f.scannedPath) f.scannedPath = assignedPath;
         f.sourceDirId = dirEntry.id;
         f.sourceDirName = dirEntry.name;
         if (dirEntry.machineHint && !f.machineHint) {
@@ -734,7 +848,7 @@ async function handleScan() {
     // Set primary directory handle for saving outputs
     if (handlesToScan.length > 0) {
       state.directoryHandle = handlesToScan[0].handle;
-      state.pastedPath = handlesToScan[0].name;
+      state.pastedPath = handlesToScan[0].fullPath || handlesToScan[0].name;
     }
 
     // B. Scan pasted paths via companion server if present
@@ -818,36 +932,85 @@ if (typeof window !== 'undefined') {
 
 // Quick inspection helper for newly selected directory
 async function detectDirectoryType(dirHandle) {
-  let detectedType = null;
+  let homagScore = 0;
+  let beamSawScore = 0;
+  let holzherScore = 0;
   let fileCount = 0;
-  try {
-    for await (const entry of dirHandle.values()) {
-      if (entry.kind === 'file') {
-        fileCount++;
-        const ext = entry.name.toLowerCase().split('.').pop();
-        if (ext === 'mpr' && !detectedType) detectedType = 'Homag CNC';
-        else if ((ext === 'cpout' || ext === 'cpl' || entry.name.toLowerCase().includes('cpout')) && !detectedType) detectedType = 'Beam Saw';
-        else if (ext === 'hop' && !detectedType) detectedType = 'Holzher CNC';
-      } else if (entry.kind === 'directory') {
-        try {
-          for await (const subEntry of entry.values()) {
-            if (subEntry.kind === 'file') {
-              fileCount++;
-              const ext = subEntry.name.toLowerCase().split('.').pop();
-              if (ext === 'mpr' && !detectedType) detectedType = 'Homag CNC';
-              else if ((ext === 'cpout' || ext === 'cpl' || subEntry.name.toLowerCase().includes('cpout')) && !detectedType) detectedType = 'Beam Saw';
-              else if (ext === 'hop' && !detectedType) detectedType = 'Holzher CNC';
-              if (fileCount > 25 && detectedType) break;
-            }
+  const maxInspectFiles = 80;
+
+  const dirNameLower = (dirHandle.name || '').toLowerCase();
+  if (dirNameLower.includes('homag')) homagScore += 50;
+  if (dirNameLower.includes('beam saw') || dirNameLower.includes('beamsaw') || dirNameLower.includes('cut 6120')) beamSawScore += 50;
+  if (dirNameLower.includes('holzher') || dirNameLower.includes('dynestic')) holzherScore += 50;
+
+  async function inspectDirRecursive(handle, depth = 0) {
+    if (depth > 3 || fileCount >= maxInspectFiles) return;
+    try {
+      for await (const entry of handle.values()) {
+        if (fileCount >= maxInspectFiles) break;
+        const nameLower = (entry.name || '').toLowerCase();
+
+        if (entry.kind === 'directory') {
+          if (nameLower.includes('homag')) homagScore += 30;
+          if (nameLower.includes('beam saw') || nameLower.includes('beamsaw') || nameLower.includes('cut 6120')) beamSawScore += 30;
+          if (nameLower.includes('holzher') || nameLower.includes('dynestic')) holzherScore += 30;
+          await inspectDirRecursive(entry, depth + 1);
+        } else if (entry.kind === 'file') {
+          fileCount++;
+          const ext = nameLower.split('.').pop();
+
+          // 1. Primary definitive machine extensions
+          if (ext === 'mpr') {
+            homagScore += 100;
+          } else if (nameLower.startsWith('cpout') || ext === 'cpout' || ext === 'cpl') {
+            beamSawScore += 100;
+          } else if (ext === 'hop') {
+            holzherScore += 100;
+          } else if (ext === 'saw' || ext === 'cut') {
+            beamSawScore += 50;
           }
-        } catch (_) {}
+
+          // 2. Machine keywords in filenames (e.g. MSET - Homag QR.tld vs MSET - Beamsaw.tld)
+          if (nameLower.includes('homag')) homagScore += 25;
+          if (nameLower.includes('beam saw') || nameLower.includes('beamsaw') || nameLower.includes('cut 6120')) beamSawScore += 25;
+          if (nameLower.includes('holzher') || nameLower.includes('dynestic')) holzherScore += 25;
+
+          // 3. Program prefix conventions (RH = Homag, RY = Beam Saw, RF = Holzher)
+          if (/^rh[a-z0-9]/i.test(entry.name) && ext !== 'gif') homagScore += 20;
+          if (/^ry[a-z0-9]/i.test(entry.name)) beamSawScore += 20;
+          if (/^rf[a-z0-9]/i.test(entry.name)) holzherScore += 20;
+
+          // 4. Sample text content for ambiguous txt or pull files
+          if ((ext === 'txt' || ext === 'pull') && fileCount < 15) {
+            try {
+              const f = await entry.getFile();
+              const sample = await f.slice(0, 1024).text();
+              const upper = sample.toUpperCase();
+              if (upper.includes('[001') || upper.includes('[002')) homagScore += 100;
+              if (upper.includes('INV1,') || upper.includes('INV2,') || upper.includes('ORD1,')) beamSawScore += 100;
+              if (upper.includes('SPRAY BOOTH --> THEN HOMAG')) homagScore += 30;
+              if (upper.includes('SPRAY BOOTH --> THEN BEAM SAW')) beamSawScore += 30;
+            } catch (_) {}
+          }
+        }
       }
-      if (fileCount > 25 && detectedType) break;
+    } catch (err) {
+      console.warn('Directory inspection read error:', err);
     }
-  } catch (err) {
-    console.warn('Could not inspect directory preview:', err);
   }
-  return { detectedType, fileCount };
+
+  await inspectDirRecursive(dirHandle, 0);
+
+  let detectedType = null;
+  if (homagScore > beamSawScore && homagScore > holzherScore) {
+    detectedType = 'Homag CNC';
+  } else if (beamSawScore > homagScore && beamSawScore > holzherScore) {
+    detectedType = 'Beam Saw';
+  } else if (holzherScore > homagScore && holzherScore > beamSawScore) {
+    detectedType = 'Holzher CNC';
+  }
+
+  return { detectedType, fileCount, homagScore, beamSawScore, holzherScore };
 }
 if (typeof window !== 'undefined') {
   window.detectDirectoryType = detectDirectoryType;
@@ -893,16 +1056,20 @@ async function handleSelectFolder() {
     // Inspect folder to detect machine type (Homag CNC vs Beam Saw vs Holzher)
     const inspection = await detectDirectoryType(dirHandle);
 
+    const parentPrefix = getParentPathPrefix(dirHandle.name, inspection.detectedType);
+    const fullPath = parentPrefix ? `${parentPrefix}\\${dirHandle.name}` : dirHandle.name;
+
     const dirEntry = {
       id: 'dir_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
       name: dirHandle.name,
+      fullPath: fullPath,
       machineHint: inspection.detectedType || null,
       handle: dirHandle
     };
 
     state.selectedDirectories.push(dirEntry);
     state.directoryHandle = state.selectedDirectories[0].handle;
-    state.pastedPath = state.selectedDirectories[0].name;
+    state.pastedPath = fullPath;
 
     // Add to UI without scanning immediately
     addLocalFolderRow(dirEntry);
@@ -1057,7 +1224,7 @@ function detectFileMachine(file) {
   // Explicit file extension rules MUST NOT be overridden by folder keywords
   if (ext === 'mpr') return 'Homag';
   if (ext === 'hop') return 'Holzher CNC';
-  if (ext === 'cpout' || ext === 'cpl' || nameLower.includes('cpout')) return 'Holzher Beam Saw';
+  if (ext === 'cpout' || ext === 'cpl' || nameLower.startsWith('cpout') || nameLower.includes('cpout')) return 'Holzher Beam Saw';
 
   if (file.machineHint) {
     if (file.machineHint.includes('Beam Saw')) return 'Holzher Beam Saw';
@@ -1069,7 +1236,7 @@ function detectFileMachine(file) {
   const scannedPathLower = (file.scannedPath || '').toLowerCase();
   const fullPathLower = (relPathLower + ' ' + scannedPathLower).toLowerCase();
   
-  if (fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw')) {
+  if (fullPathLower.includes('beam saw') || fullPathLower.includes('beamsaw') || fullPathLower.includes('cut 6120')) {
     return 'Holzher Beam Saw';
   }
   if (fullPathLower.includes('holzher') || fullPathLower.includes('dynestic')) {
