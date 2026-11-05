@@ -1,4 +1,5 @@
 import initSqlJs from './sql-wasm.js';
+import logoUrl from './assets/logo.png';
 import './konva.min.js';
 import { getSqlWasmBinary } from './sqlWasmBinary.js';
 
@@ -67,11 +68,13 @@ async function initApp() {
   // Restore session cache if present
   restoreSessionCache();
   
-  // Check backend server connection and start live 4s heartbeat polling
+  // Check backend server connection once if running companion server
   await checkServerConnection(true);
-  setInterval(() => {
-    checkServerConnection(true);
-  }, 4000);
+  if (isServerConnected) {
+    setInterval(() => {
+      checkServerConnection(true);
+    }, 5000);
+  }
   
   // Load SQLite WASM (offline inlined WebAssembly)
   await loadSqlWasm();
@@ -80,10 +83,9 @@ async function initApp() {
 let isServerConnected = false;
 let companionApiBase = '';
 
-// Check if backend server is responsive with cache-busting and live heartbeat
+// Check if backend server is responsive with cache-busting
 async function checkServerConnection(silent = false) {
   const statusEl = document.getElementById('connection-status');
-  if (!statusEl) return;
 
   const endpoints = (typeof window !== 'undefined' && window.location.protocol === 'file:')
     ? ['http://localhost:9994/api/status']
@@ -115,13 +117,16 @@ async function checkServerConnection(silent = false) {
 
   if (connected) {
     companionApiBase = activeBase;
-    if (!isServerConnected || statusEl.classList.contains('offline')) {
+    if (!isServerConnected) {
       isServerConnected = true;
-      statusEl.className = 'status-indicator online';
-      statusEl.querySelector('.indicator-text').textContent = 'Companion Server Connected';
       if (!silent) {
         showToast('Server Connected', 'Backend companion server connection established.', 'success');
       }
+    }
+    if (statusEl) {
+      statusEl.className = 'status-indicator online';
+      const textEl = statusEl.querySelector('.indicator-text');
+      if (textEl) textEl.textContent = 'Companion Server Connected';
     }
     
     if (serverData && serverData.username && !state.metadata.operatorName) {
@@ -133,9 +138,10 @@ async function checkServerConnection(silent = false) {
   } else {
     isServerConnected = false;
     companionApiBase = '';
-    if (statusEl.classList.contains('online') || !statusEl.classList.contains('offline')) {
+    if (statusEl) {
       statusEl.className = 'status-indicator offline';
-      statusEl.querySelector('.indicator-text').textContent = 'Standalone Single-File Mode';
+      const textEl = statusEl.querySelector('.indicator-text');
+      if (textEl) textEl.textContent = 'Standalone Single-File Mode';
     }
   }
 }
@@ -3099,7 +3105,7 @@ function renderPullSheetReport() {
     <div class="ps-report-header">
       <div class="ps-header-top">
         <div style="display: flex; align-items: center; gap: 10px;">
-          <img src="logo.png" alt="Corporate Interiors Logo" style="height: 32px; width: auto; object-fit: contain;">
+          <img src="${logoUrl}" alt="Corporate Interiors Logo" style="height: 32px; width: auto; object-fit: contain;">
           <span>Drawn by: ${operatorName}</span>
         </div>
         <h2 class="ps-header-title">Pull Sheet</h2>
