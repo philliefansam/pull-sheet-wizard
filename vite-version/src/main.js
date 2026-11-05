@@ -173,31 +173,141 @@ async function loadSqlWasm() {
 
 // Setup Event Listeners
 function setupEventListeners() {
-  // Sidebar navigation
+  // Sidebar navigation and smooth-scroll jumping
+  const navSectionMap = {
+    'nav-dashboard': 'section-scan',
+    'nav-metadata': 'section-metadata',
+    'nav-wizard': 'section-wizard',
+    'nav-database': 'section-export',
+    'nav-settings': 'section-settings'
+  };
+
+  let isProgrammaticScroll = false;
+  let scrollNavRaf = null;
+
+  function updateActiveNavOnScroll() {
+    if (isProgrammaticScroll) return;
+    const settingsSec = document.getElementById('section-settings');
+    if (settingsSec && !settingsSec.classList.contains('hidden')) return;
+
+    const sections = [
+      { navId: 'nav-dashboard', el: document.getElementById('section-scan') },
+      { navId: 'nav-metadata', el: document.getElementById('section-metadata') },
+      { navId: 'nav-wizard', el: document.getElementById('section-wizard') },
+      { navId: 'nav-database', el: document.getElementById('section-export') }
+    ];
+
+    const isAtBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 60);
+    let activeNavId = 'nav-dashboard';
+
+    if (isAtBottom) {
+      // If user has scrolled to the bottom of the page, activate the last visible section
+      for (let i = sections.length - 1; i >= 0; i--) {
+        if (sections[i].el && !sections[i].el.classList.contains('hidden')) {
+          activeNavId = sections[i].navId;
+          break;
+        }
+      }
+    } else {
+      const scrollPosition = window.scrollY + 160;
+      for (const s of sections) {
+        if (s.el && !s.el.classList.contains('hidden')) {
+          const top = s.el.getBoundingClientRect().top + window.scrollY;
+          if (scrollPosition >= top) {
+            activeNavId = s.navId;
+          }
+        }
+      }
+    }
+
+    document.querySelectorAll('.nav-menu .nav-item').forEach(item => {
+      if (item.id === activeNavId) {
+        item.classList.add('active');
+      } else if (item.id !== 'nav-settings') {
+        item.classList.remove('active');
+      }
+    });
+  }
+
+  window.addEventListener('scroll', () => {
+    if (scrollNavRaf) cancelAnimationFrame(scrollNavRaf);
+    scrollNavRaf = requestAnimationFrame(updateActiveNavOnScroll);
+  }, { passive: true });
+
   document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', (e) => {
       e.preventDefault();
-      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-      item.classList.add('active');
-      
-      const targetSection = item.id.replace('nav-', 'section-');
-      document.querySelectorAll('main > .content-body > section').forEach(sec => {
-        if (sec.id === targetSection || sec.id === 'section-scan') {
-          sec.classList.remove('hidden');
+
+      if (item.id === 'nav-settings') {
+        // EXCEPTION: Settings is shown on its own
+        document.querySelectorAll('main > .content-body > section').forEach(sec => {
+          if (sec.id === 'section-settings') {
+            sec.classList.remove('hidden');
+          } else {
+            sec.classList.add('hidden');
+          }
+        });
+
+        document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+
+      // Any main navigation item: hide settings view
+      const settingsSec = document.getElementById('section-settings');
+      if (settingsSec) {
+        settingsSec.classList.add('hidden');
+      }
+
+      // Always ensure directory scan section is visible
+      const scanSec = document.getElementById('section-scan');
+      if (scanSec) scanSec.classList.remove('hidden');
+
+      // If a project is loaded, ensure all main modules stay visible together
+      const hasProject = (state.files && state.files.length > 0) || (state.materials && Object.keys(state.materials).length > 0);
+      if (hasProject) {
+        ['section-metadata', 'section-wizard', 'section-export'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.classList.remove('hidden');
+        });
+      }
+
+      const targetId = navSectionMap[item.id] || 'section-scan';
+      const targetEl = document.getElementById(targetId);
+
+      if (targetEl && !targetEl.classList.contains('hidden')) {
+        isProgrammaticScroll = true;
+        document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+
+        if (targetId === 'section-scan' || item.id === 'nav-dashboard') {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         } else {
-          sec.classList.add('hidden');
+          targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
-      });
-      // Show metadata if wizard, database, or pull sheet is shown
-      if (targetSection === 'section-wizard' || targetSection === 'section-export' || targetSection === 'section-pull-sheet') {
-        document.getElementById('section-metadata').classList.remove('hidden');
+
+        setTimeout(() => {
+          isProgrammaticScroll = false;
+        }, 1000);
+      } else {
+        // Target section is not yet available because no project is loaded
+        document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+        const navDashboard = document.getElementById('nav-dashboard');
+        if (navDashboard) navDashboard.classList.add('active');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        showToast('Scan Required', 'Please select a folder or load demo files first to view ' + item.textContent.trim() + '.', 'info');
       }
-      if (targetSection === 'section-pull-sheet') {
-        renderPullSheetReport();
-      }
-      saveSessionCache();
     });
   });
+
+  const btnSettingsBack = document.getElementById('btn-settings-back');
+  if (btnSettingsBack) {
+    btnSettingsBack.addEventListener('click', () => {
+      const navDashboard = document.getElementById('nav-dashboard');
+      if (navDashboard) navDashboard.click();
+    });
+  }
 
   // Buttons
   document.getElementById('btn-scan').addEventListener('click', handleScan);
@@ -242,25 +352,6 @@ function setupEventListeners() {
   const btnToggleAllMaterials = document.getElementById('btn-toggle-all-materials');
   if (btnToggleAllMaterials) {
     btnToggleAllMaterials.addEventListener('click', toggleAllMaterialGroups);
-  }
-
-  const btnGeneratePullSheet = document.getElementById('btn-generate-pull-sheet');
-  if (btnGeneratePullSheet) {
-    btnGeneratePullSheet.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-      const navPullSheet = document.getElementById('nav-pull-sheet');
-      if (navPullSheet) navPullSheet.classList.add('active');
-      
-      document.querySelectorAll('main > .content-body > section').forEach(sec => {
-        if (sec.id === 'section-pull-sheet' || sec.id === 'section-scan' || sec.id === 'section-metadata') {
-          sec.classList.remove('hidden');
-        } else {
-          sec.classList.add('hidden');
-        }
-      });
-      renderPullSheetReport();
-      saveSessionCache();
-    });
   }
   
   // Paste path row button

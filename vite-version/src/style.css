@@ -41,6 +41,10 @@
   padding: 0;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   background-color: var(--bg-app);
   color: var(--text-primary);
@@ -67,6 +71,23 @@ body {
   gap: 32px;
   flex-shrink: 0;
   z-index: 10;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 5px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
 }
 
 .brand {
@@ -130,6 +151,7 @@ body {
   font-size: 14px;
   border-radius: 8px;
   transition: var(--transition-smooth);
+  cursor: pointer;
 }
 
 .nav-item svg {
@@ -164,6 +186,7 @@ body {
   display: flex;
   flex-direction: column;
   max-width: 100%;
+  min-width: 0;
 }
 
 .top-header {
@@ -243,7 +266,7 @@ body {
 
 /* Content Layout */
 .content-body {
-  padding: 40px;
+  padding: 40px 40px 100px 40px;
   display: flex;
   flex-direction: column;
   gap: 32px;
@@ -260,6 +283,7 @@ body {
   box-shadow: var(--card-shadow);
   overflow: hidden;
   transition: var(--transition-smooth);
+  scroll-margin-top: 100px;
 }
 
 .card:hover {
