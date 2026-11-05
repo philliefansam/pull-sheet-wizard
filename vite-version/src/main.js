@@ -1389,20 +1389,37 @@ function processScannedFiles() {
       mat.final_width = Math.max(mat.final_width, parsed.recommended_width);
       mat.toolpathData = parsed;
       
-      const sheetQty = parsed.sheet_count || 1;
-      for (let s = 0; s < sheetQty; s++) {
-        const sName = sheetQty > 1 ? `${file.name} (Sheet ${s + 1}/${sheetQty})` : file.name;
-        mat.sheets.push({
-          fileName: sName,
-          raw_max_x: parsed.raw_max_x,
-          raw_max_y: parsed.raw_max_y,
-          net_length: parsed.net_length,
-          net_width: parsed.net_width,
-          final_length: parsed.recommended_length,
-          final_width: parsed.recommended_width,
-          hasTrim: parsed.hasTrim,
-          ...getPrevSheetData(key, sName, mat.sheets.length)
+      if (parsed.sheets && parsed.sheets.length > 0) {
+        parsed.sheets.forEach((ps, s) => {
+          const sName = parsed.sheets.length > 1 ? `${file.name} (Sheet ${s + 1}/${parsed.sheets.length})` : file.name;
+          mat.sheets.push({
+            fileName: sName,
+            raw_max_x: ps.raw_max_x,
+            raw_max_y: ps.raw_max_y,
+            net_length: ps.net_length,
+            net_width: ps.net_width,
+            final_length: ps.recommended_length,
+            final_width: ps.recommended_width,
+            hasTrim: ps.hasTrim,
+            ...getPrevSheetData(key, sName, mat.sheets.length)
+          });
         });
+      } else {
+        const sheetQty = parsed.sheet_count || 1;
+        for (let s = 0; s < sheetQty; s++) {
+          const sName = sheetQty > 1 ? `${file.name} (Sheet ${s + 1}/${sheetQty})` : file.name;
+          mat.sheets.push({
+            fileName: sName,
+            raw_max_x: parsed.raw_max_x,
+            raw_max_y: parsed.raw_max_y,
+            net_length: parsed.net_length,
+            net_width: parsed.net_width,
+            final_length: parsed.recommended_length,
+            final_width: parsed.recommended_width,
+            hasTrim: parsed.hasTrim,
+            ...getPrevSheetData(key, sName, mat.sheets.length)
+          });
+        }
       }
     } else if (ext === 'txt' || ext === 'pull') {
       const parsed = parsePullSheet(file.content);
@@ -2571,58 +2588,171 @@ function parseCPOUT(content) {
   let raw_max_x = 0; // Width
   let sheet_count = 1;
   let invTrim1 = 0, invTrim2 = 0, invTrim3 = 0, invTrim4 = 0;
-  
-  const ordLengths = []; // Length axis
-  const ordWidths = []; // Width axis
-  
+
   const lines = content.split(/\r?\n/);
+
+  // 1. Parse Inventory header for raw sheet dimensions and trim settings
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     const parts = line.split(',');
-    
     if (parts[0] === 'INV1') {
-      // 3rd part (0-indexed index 2) is number of sheets in run (e.g. INV1, 999, 10, ...)
       if (parts[2]) {
-        const qty = parseInt(parts[2].trim());
-        if (!isNaN(qty) && qty > 0) {
-          sheet_count = qty;
-        }
+        const qty = parseInt(parts[2].trim(), 10);
+        if (!isNaN(qty) && qty > 0) sheet_count = qty;
       }
-      // In beam saw CPOUT INV1: parts[4] is Width (e.g. 61.000), parts[5] is Length (e.g. 121.000)
       if (parts[4]) raw_max_x = parseFloat(parts[4]); // Board Width
       if (parts[5]) raw_max_y = parseFloat(parts[5]); // Board Length
       if (parts[6]) invTrim1 = parseFloat(parts[6]);
       if (parts[7]) invTrim2 = parseFloat(parts[7]);
       if (parts[8]) invTrim3 = parseFloat(parts[8]);
       if (parts[9]) invTrim4 = parseFloat(parts[9]);
-    }
-    
-    if (parts[0] === 'ORD1') {
-      // 3rd is Length, 4th is Width (0-indexed 3 and 4)
-      if (parts[3]) ordLengths.push(parseFloat(parts[3])); // Net lengths
-      if (parts[4]) ordWidths.push(parseFloat(parts[4])); // Net widths
+      break;
     }
   }
-  
-  const net_l = ordLengths.length > 0 ? Math.max(...ordLengths) : 0; // Max net dimension along Length
-  // Cumulate width stacks for beam saw
-  const net_w = ordWidths.reduce((a, b) => a + b, 0); // Cumulated dimension along Width
-  
-  const recWidth = calculateFinalDimension(net_w, raw_max_x); // Final cropped Width
-  const recLength = calculateFinalDimension(net_l, raw_max_y); // Final cropped Length
-  
-  const hasTrim = (invTrim1 > 0.001 || invTrim2 > 0.001 || invTrim3 > 0.001 || invTrim4 > 0.001) ||
-                  (net_w > 0 && net_l > 0 && net_w < raw_max_x - 0.01 && net_l < raw_max_y - 0.01);
-  
+
+  // 2. Parse Cutting Patterns (PAT1, PAT2 ... BCUT ... CUT1)
+  const patterns = [];
+  let currentPat = null;
+  let currentStrip = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const parts = line.split(',');
+
+    if (parts[0] === 'PAT1') {
+      if (currentPat) patterns.push(currentPat);
+      const patId = parts[1] || '';
+      const ripDir = (parts[2] || 'L').trim().toUpperCase(); // L = Lengthwise rip, S/C = Crosswise rip
+      const sheetQty = parseInt(parts[3] || '1', 10) || 1;
+      currentPat = {
+        id: patId,
+        ripDir: ripDir,
+        sheetQty: sheetQty,
+        strips: []
+      };
+      currentStrip = null;
+    } else if (parts[0] === 'CUT1' && currentPat) {
+      const level = parts[1] ? parts[1].trim() : '';
+      const dim = parseFloat(parts[2]) || 0;
+      const type = parts[3] ? parseInt(parts[3].trim(), 10) : 0; // 0 = part strip, 1 = part, 2 = offcut
+      const id = parts[4] ? parts[4].trim() : '';
+
+      if (level === '01') {
+        currentStrip = {
+          dim: dim,
+          type: type,
+          id: id,
+          cuts: []
+        };
+        currentPat.strips.push(currentStrip);
+      } else if (currentStrip && level === '02') {
+        currentStrip.cuts.push({
+          level: level,
+          dim: dim,
+          type: type,
+          id: id
+        });
+      }
+    }
+  }
+  if (currentPat) patterns.push(currentPat);
+
+  const sheets = [];
+
+  if (patterns.length > 0) {
+    for (const pat of patterns) {
+      const isRipAlongLength = (pat.ripDir === 'L');
+
+      // Primary cuts (level 01) with type !== 2 contain parts
+      const partStrips = pat.strips.filter(s => s.type !== 2);
+      const ripDim = partStrips.reduce((sum, s) => sum + s.dim, 0);
+
+      // In each part strip, secondary cuts (level 02) with type !== 2 are parts
+      let maxCrossDim = 0;
+      for (const s of partStrips) {
+        const stripPartCuts = s.cuts.filter(c => c.type !== 2);
+        const crossSum = stripPartCuts.reduce((sum, c) => sum + c.dim, 0);
+        if (crossSum > maxCrossDim) maxCrossDim = crossSum;
+      }
+
+      let net_width = 0;  // along raw_max_x (Board Width)
+      let net_length = 0; // along raw_max_y (Board Length)
+
+      if (isRipAlongLength) {
+        net_width = ripDim;
+        net_length = maxCrossDim;
+      } else {
+        net_width = maxCrossDim;
+        net_length = ripDim;
+      }
+
+      const recWidth = calculateFinalDimension(net_width, raw_max_x);
+      const recLength = calculateFinalDimension(net_length, raw_max_y);
+      const sheetHasTrim = (invTrim1 > 0.001 || invTrim2 > 0.001 || invTrim3 > 0.001 || invTrim4 > 0.001) ||
+                           (net_width > 0 && net_length > 0 && (net_width < raw_max_x - 0.01 || net_length < raw_max_y - 0.01));
+
+      for (let s = 0; s < pat.sheetQty; s++) {
+        sheets.push({
+          raw_max_x,
+          raw_max_y,
+          net_length: net_width, // maps to raw_max_x (Width)
+          net_width: net_length,  // maps to raw_max_y (Length)
+          recommended_length: recWidth,
+          recommended_width: recLength,
+          hasTrim: sheetHasTrim
+        });
+      }
+    }
+  }
+
+  // Fallback to ORD1 if no PAT1/CUT1 patterns could be parsed
+  if (sheets.length === 0) {
+    const ordLengths = [];
+    const ordWidths = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      const parts = line.split(',');
+      if (parts[0] === 'ORD1') {
+        if (parts[3]) ordLengths.push(parseFloat(parts[3]));
+        if (parts[4]) ordWidths.push(parseFloat(parts[4]));
+      }
+    }
+    const net_l = ordLengths.length > 0 ? Math.max(...ordLengths) : 0;
+    const net_w = ordWidths.reduce((a, b) => a + b, 0);
+    const recWidth = calculateFinalDimension(net_w, raw_max_x);
+    const recLength = calculateFinalDimension(net_l, raw_max_y);
+    const hasTrim = (invTrim1 > 0.001 || invTrim2 > 0.001 || invTrim3 > 0.001 || invTrim4 > 0.001) ||
+                    (net_w > 0 && net_l > 0 && (net_w < raw_max_x - 0.01 || net_l < raw_max_y - 0.01));
+    for (let s = 0; s < sheet_count; s++) {
+      sheets.push({
+        raw_max_x,
+        raw_max_y,
+        net_length: net_w,
+        net_width: net_l,
+        recommended_length: recWidth,
+        recommended_width: recLength,
+        hasTrim
+      });
+    }
+  }
+
+  const maxRecWidth = sheets.length > 0 ? Math.max(...sheets.map(s => s.recommended_length)) : raw_max_x;
+  const maxRecLength = sheets.length > 0 ? Math.max(...sheets.map(s => s.recommended_width)) : raw_max_y;
+  const maxNetW = sheets.length > 0 ? Math.max(...sheets.map(s => s.net_length)) : 0;
+  const maxNetL = sheets.length > 0 ? Math.max(...sheets.map(s => s.net_width)) : 0;
+  const anyTrim = sheets.some(s => s.hasTrim);
+
   return {
-    raw_max_x, // Board Width (Dimension 1)
-    raw_max_y, // Board Length (Dimension 2)
-    net_length: net_w, // UI maps this to calcFinX (Width)
-    net_width: net_l,  // UI maps this to calcFinY (Length)
-    recommended_length: recWidth, // UI maps this to finX (Width)
-    recommended_width: recLength, // UI maps this to finY (Length)
-    sheet_count,
-    hasTrim
+    raw_max_x,
+    raw_max_y,
+    net_length: maxNetW,
+    net_width: maxNetL,
+    recommended_length: maxRecWidth,
+    recommended_width: maxRecLength,
+    sheet_count: sheets.length,
+    hasTrim: anyTrim,
+    sheets
   };
 }
 
