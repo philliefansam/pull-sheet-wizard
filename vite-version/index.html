@@ -276,11 +276,17 @@
           </div>
           <div class="card-body grid-2-col">
             <div class="form-group">
-              <label for="settings-overcut">Overcut Overage / Clearance (in)</label>
+              <label for="settings-overcut" class="settings-tooltip-label" data-tooltip="Extra clearance added to net cut bounds before rounding up to the nearest inch. Provides shop trim allowance when sizing raw core material.">
+                Overcut Overage / Clearance (in)
+                <span class="tooltip-icon">?</span>
+              </label>
               <input type="text" id="settings-overcut" value="2.0">
             </div>
             <div class="form-group">
-              <label for="settings-offcut">Minimum Offcut Dimension (in)</label>
+              <label for="settings-offcut" class="settings-tooltip-label" data-tooltip="Minimum offcut threshold. If the remaining scrap along an edge is less than or equal to this value, the full stock sheet dimension is used instead of creating an unusable sliver.">
+                Minimum Offcut Dimension (in)
+                <span class="tooltip-icon">?</span>
+              </label>
               <input type="text" id="settings-offcut" value="6.0">
             </div>
           </div>

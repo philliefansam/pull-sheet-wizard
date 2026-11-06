@@ -334,6 +334,95 @@ label {
   color: var(--text-secondary);
 }
 
+/* Settings Tooltip Label Styling */
+.settings-tooltip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: help;
+  position: relative;
+  width: fit-content;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+
+.settings-tooltip-label:hover {
+  color: var(--text-primary);
+}
+
+.settings-tooltip-label .tooltip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+.settings-tooltip-label:hover .tooltip-icon {
+  background: var(--primary-glow);
+  color: var(--primary);
+  border-color: var(--primary);
+  transform: scale(1.1);
+}
+
+/* Custom Tooltip Bubble */
+.settings-tooltip-label::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 280px;
+  padding: 10px 14px;
+  background: hsl(225, 22%, 12%);
+  color: #f1f5f9;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: normal;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+  z-index: 100;
+  white-space: normal;
+}
+
+/* Tooltip Arrow */
+.settings-tooltip-label::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 16px;
+  border-width: 6px 6px 0 6px;
+  border-style: solid;
+  border-color: hsl(225, 22%, 12%) transparent transparent transparent;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+  z-index: 101;
+}
+
+.settings-tooltip-label:hover::after,
+.settings-tooltip-label:hover::before {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
 input[type="text"], input[type="date"], select {
   background-color: var(--bg-sidebar);
   border: 1px solid var(--border-color);
