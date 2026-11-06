@@ -42,6 +42,35 @@ function formatUsernameAsEngineer(rawName) {
   return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
 
+// Local YYYY-MM-DD date formatter for native date input
+function getLocalDateString(d = new Date()) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// Convert any date format to YYYY-MM-DD for date input
+function toIsoDate(dateStr) {
+  if (!dateStr) return getLocalDateString();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  const parsed = new Date(dateStr);
+  if (!isNaN(parsed.getTime())) {
+    return getLocalDateString(parsed);
+  }
+  return getLocalDateString();
+}
+
+// Convert YYYY-MM-DD to display format (M/D/YYYY)
+function formatDisplayDate(dateStr) {
+  if (!dateStr) return new Date().toLocaleDateString('en-US');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [y, m, d] = dateStr.split('-');
+    return `${parseInt(m, 10)}/${parseInt(d, 10)}/${y}`;
+  }
+  return dateStr;
+}
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', async () => {
   initApp();
@@ -49,10 +78,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // App Entry Point
 async function initApp() {
-  // Set default date
-  const today = new Date();
-  state.metadata.dateProcessed = today.toISOString().split('T')[0];
-  document.getElementById('meta-date-processed').value = state.metadata.dateProcessed;
+  // Set default date to today in local time
+  state.metadata.dateProcessed = getLocalDateString();
+  const metaDate = document.getElementById('meta-date-processed');
+  if (metaDate) metaDate.value = state.metadata.dateProcessed;
 
   // Prefill build-time PC username if available
   if (typeof __PC_USERNAME__ !== 'undefined' && __PC_USERNAME__) {
@@ -433,6 +462,16 @@ function setupEventListeners() {
     updateDatabasePreview();
     saveSessionCache();
   });
+  const metaDateInput = document.getElementById('meta-date-processed');
+  if (metaDateInput) {
+    const handleDateChange = (e) => {
+      state.metadata.dateProcessed = e.target.value;
+      updateDatabasePreview();
+      saveSessionCache();
+    };
+    metaDateInput.addEventListener('change', handleDateChange);
+    metaDateInput.addEventListener('input', handleDateChange);
+  }
   
   // Database Preview Tabs
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -469,7 +508,7 @@ function handleResetProject() {
       client: '',
       projectName: '',
       operatorName: savedOperator || '',
-      dateProcessed: new Date().toLocaleDateString('en-US')
+      dateProcessed: getLocalDateString()
     };
 
     // 3. Reset target folder path inputs
@@ -3100,7 +3139,7 @@ function renderPullSheetReport() {
   if (!container) return;
 
   const operatorName = state.metadata.operatorName || 'Sam H';
-  const dateProcessed = state.metadata.dateProcessed || new Date().toLocaleDateString('en-US');
+  const dateProcessed = formatDisplayDate(state.metadata.dateProcessed);
   const clientName = state.metadata.client ? state.metadata.client.trim() : '';
   const projectName = state.metadata.projectName || 'Untitled Project';
   const jobNumber = state.metadata.jobNumber || 'N/A';
@@ -3416,7 +3455,10 @@ function restoreSessionCache() {
       if (document.getElementById('meta-client')) document.getElementById('meta-client').value = state.metadata.client || '';
       if (document.getElementById('meta-project-name')) document.getElementById('meta-project-name').value = state.metadata.projectName || '';
       if (document.getElementById('meta-operator-name')) document.getElementById('meta-operator-name').value = state.metadata.operatorName || '';
-      if (document.getElementById('meta-date-processed')) document.getElementById('meta-date-processed').value = state.metadata.dateProcessed || '';
+      if (document.getElementById('meta-date-processed')) {
+        state.metadata.dateProcessed = toIsoDate(state.metadata.dateProcessed);
+        document.getElementById('meta-date-processed').value = state.metadata.dateProcessed;
+      }
     }
 
     if (cacheData.settings) {
@@ -3653,7 +3695,10 @@ function applyImportedJobData(jobData, fileName = '') {
     if (document.getElementById('meta-client')) document.getElementById('meta-client').value = state.metadata.client || '';
     if (document.getElementById('meta-project-name')) document.getElementById('meta-project-name').value = state.metadata.projectName || '';
     if (document.getElementById('meta-operator-name')) document.getElementById('meta-operator-name').value = state.metadata.operatorName || '';
-    if (document.getElementById('meta-date-processed')) document.getElementById('meta-date-processed').value = state.metadata.dateProcessed || '';
+    if (document.getElementById('meta-date-processed')) {
+      state.metadata.dateProcessed = toIsoDate(state.metadata.dateProcessed);
+      document.getElementById('meta-date-processed').value = state.metadata.dateProcessed;
+    }
   }
 
   // 2. Restore settings
