@@ -2086,14 +2086,7 @@ function buildWizard() {
         const sheet = mat.sheets[sheetIdx];
         if (!sheet) return;
 
-        const rawX = sheet.raw_max_x || mat.raw_max_x || 96.0;
-        const rawY = sheet.raw_max_y || mat.raw_max_y || 48.0;
-
-        const calcFinX = calculateFinalDimension(sheet.net_length, rawX);
-        const calcFinY = calculateFinalDimension(sheet.net_width, rawY);
-
-        const currentFinX = (sheet.manual_final_length !== undefined) ? sheet.manual_final_length : ((sheet.final_length && sheet.final_length < rawX) ? sheet.final_length : (calcFinX > 0 ? calcFinX : rawX));
-        const currentFinY = (sheet.manual_final_width !== undefined) ? sheet.manual_final_width : ((sheet.final_width && sheet.final_width < rawY) ? sheet.final_width : (calcFinY > 0 ? calcFinY : rawY));
+        const { finX: currentFinX, finY: currentFinY } = resolveSheetDimensions(sheet, mat);
 
         const promptVal = prompt(`Enter manual sheet dimensions for Sheet ${sheetIdx + 1} in inches (Width x Length, e.g. 61.0 x 121.0):`, `${currentFinX.toFixed(1)} x ${currentFinY.toFixed(1)}`);
         if (promptVal !== null) {
@@ -2157,37 +2150,61 @@ function buildWizard() {
   });
 }
 
+// Helper to resolve effective dimensions for a sheet, taking into account manual overrides, whole sheet mode, toolpath bounding, and raw stock ceilings
+function resolveSheetDimensions(sheet, mat) {
+  const isWhole = mat ? (mat.use_whole_sheets === 1 || mat.use_whole_sheets === true) : false;
+  const rawX = (sheet && sheet.raw_max_x) || (mat && mat.raw_max_x) || 96.0;
+  const rawY = (sheet && sheet.raw_max_y) || (mat && mat.raw_max_y) || 48.0;
+
+  const calcFinX = (sheet && sheet.net_length !== undefined) ? calculateFinalDimension(sheet.net_length, rawX) : 0;
+  const calcFinY = (sheet && sheet.net_width !== undefined) ? calculateFinalDimension(sheet.net_width, rawY) : 0;
+
+  let finX = rawX;
+  let finY = rawY;
+  let tagText = '';
+
+  if (sheet && sheet.is_modified) {
+    finX = sheet.manual_final_length !== undefined ? sheet.manual_final_length : (sheet.final_length || rawX);
+    finY = sheet.manual_final_width !== undefined ? sheet.manual_final_width : (sheet.final_width || rawY);
+    tagText = '(Modified)';
+  } else if (isWhole) {
+    finX = rawX;
+    finY = rawY;
+    tagText = '(Whole Sheet)';
+  } else if (sheet) {
+    finX = (sheet.final_length && sheet.final_length < rawX) ? sheet.final_length : (calcFinX > 0 ? calcFinX : rawX);
+    finY = (sheet.final_width && sheet.final_width < rawY) ? sheet.final_width : (calcFinY > 0 ? calcFinY : rawY);
+    tagText = '';
+  }
+
+  return {
+    rawX,
+    rawY,
+    calcFinX,
+    calcFinY,
+    finX,
+    finY,
+    finalLength: finX,
+    finalWidth: finY,
+    fLen: finX,
+    fWid: finY,
+    tagText,
+    isWhole
+  };
+}
+if (typeof window !== 'undefined') {
+  window.resolveSheetDimensions = resolveSheetDimensions;
+}
+
 // Helper to render wizard card dimensions badge
 function renderCardDimensionsBadge(mat) {
-  const isWhole = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
-
   return `
     <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed var(--border-color); padding-bottom: 8px; margin-bottom: 4px;">
       <span>Sheet Quantity:</span>
       <strong>${mat.sheets.length} sheet${mat.sheets.length > 1 ? 's' : ''}</strong>
     </div>
     ${mat.sheets.map((sheet, idx) => {
-      const rawX = sheet.raw_max_x || mat.raw_max_x || 96.0;
-      const rawY = sheet.raw_max_y || mat.raw_max_y || 48.0;
-
-      // Calculate authentic recommended cropped offcut dimension from toolpath net span + clearance
-      const calcFinX = calculateFinalDimension(sheet.net_length, rawX);
-      const calcFinY = calculateFinalDimension(sheet.net_width, rawY);
-
-      let finX, finY, tagText;
-      if (sheet.is_modified) {
-        finX = sheet.manual_final_length !== undefined ? sheet.manual_final_length : (sheet.final_length || rawX);
-        finY = sheet.manual_final_width !== undefined ? sheet.manual_final_width : (sheet.final_width || rawY);
-        tagText = '(Modified)';
-      } else if (isWhole) {
-        finX = rawX;
-        finY = rawY;
-        tagText = '(Whole Sheet)';
-      } else {
-        finX = (sheet.final_length && sheet.final_length < rawX) ? sheet.final_length : (calcFinX > 0 ? calcFinX : rawX);
-        finY = (sheet.final_width && sheet.final_width < rawY) ? sheet.final_width : (calcFinY > 0 ? calcFinY : rawY);
-        tagText = '';
-      }
+      const { rawX, rawY, finX, finY, tagText } = resolveSheetDimensions(sheet, mat);
 
       const trimStatusHtml = (sheet.hasTrim !== false)
         ? `<span style="margin-left: 8px; font-size: 11px; opacity: 0.9;">Trim? <span style="color: #22c55e; font-weight: bold; font-size: 13px;">✓</span></span>`
@@ -2245,23 +2262,7 @@ function getConsolidatedMaterialRows() {
     }];
     
     sheetsList.forEach(s => {
-      const rx = s.raw_max_x || mat.raw_max_x || 96.0;
-      const ry = s.raw_max_y || mat.raw_max_y || 48.0;
-
-      const calcFinX = calculateFinalDimension(s.net_length, rx);
-      const calcFinY = calculateFinalDimension(s.net_width, ry);
-
-      let fLen, fWid;
-      if (s.is_modified) {
-        fLen = s.manual_final_length !== undefined ? s.manual_final_length : (s.final_length || rx);
-        fWid = s.manual_final_width !== undefined ? s.manual_final_width : (s.final_width || ry);
-      } else if (isWholeSheets) {
-        fLen = rx;
-        fWid = ry;
-      } else {
-        fLen = (s.final_length && s.final_length < rx) ? s.final_length : (calcFinX > 0 ? calcFinX : rx);
-        fWid = (s.final_width && s.final_width < ry) ? s.final_width : (calcFinY > 0 ? calcFinY : ry);
-      }
+      const { rawX: rx, rawY: ry, fLen, fWid } = resolveSheetDimensions(s, mat);
 
       const thick = mat.thickness !== undefined ? mat.thickness : 0.75;
       const grain = mat.grain_direction || 'Horizontal';
@@ -4150,23 +4151,7 @@ function openLayupWizard(matKey, sheetIdx) {
   if (!mat || !mat.sheets || !mat.sheets[sheetIdx]) return;
   const sheet = mat.sheets[sheetIdx];
 
-  const isWhole = mat.use_whole_sheets === 1 || mat.use_whole_sheets === true;
-  const rx = sheet.raw_max_x || mat.raw_max_x || 96.0;
-  const ry = sheet.raw_max_y || mat.raw_max_y || 48.0;
-  const calcFinX = calculateFinalDimension(sheet.net_length, rx);
-  const calcFinY = calculateFinalDimension(sheet.net_width, ry);
-
-  let currentLen, currentWid;
-  if (sheet.is_modified) {
-    currentLen = sheet.manual_final_length !== undefined ? sheet.manual_final_length : (sheet.final_length || rx);
-    currentWid = sheet.manual_final_width !== undefined ? sheet.manual_final_width : (sheet.final_width || ry);
-  } else if (isWhole) {
-    currentLen = rx;
-    currentWid = ry;
-  } else {
-    currentLen = (sheet.final_length && sheet.final_length < rx) ? sheet.final_length : (calcFinX > 0 ? calcFinX : rx);
-    currentWid = (sheet.final_width && sheet.final_width < ry) ? sheet.final_width : (calcFinY > 0 ? calcFinY : ry);
-  }
+  const { finalLength: currentLen, finalWidth: currentWid } = resolveSheetDimensions(sheet, mat);
 
   const sheetLength = Math.max(currentLen, currentWid);
   const sheetWidth = Math.min(currentLen, currentWid);
