@@ -2306,6 +2306,7 @@ function getConsolidatedMaterialRows() {
 function updateDatabasePreview() {
   const metaRows = document.getElementById('db-metadata-rows');
   const summaryRows = document.getElementById('db-summary-rows');
+  if (!metaRows || !summaryRows) return;
   
   metaRows.innerHTML = `
     <tr>
@@ -2322,6 +2323,9 @@ function updateDatabasePreview() {
   rows.forEach(row => {
     const tr = document.createElement('tr');
     const isLayUp = row.layup_required === 1;
+    const isWhole = row.use_whole_sheets === 1 || row.use_whole_sheets === true;
+    const hasCustomLayup = !!row.custom_layup;
+    const customLayupTooltip = hasCustomLayup ? (typeof row.custom_layup === 'string' ? row.custom_layup : JSON.stringify(row.custom_layup)) : '';
     
     tr.innerHTML = `
       <td><strong>${row.material_name}</strong></td>
@@ -2337,6 +2341,9 @@ function updateDatabasePreview() {
       <td>${row.final_width.toFixed(2)}</td>
       <td>${row.raw_max_x.toFixed(2)}</td>
       <td>${row.raw_max_y.toFixed(2)}</td>
+      <td><span class="badge" style="background-color: ${isWhole ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255, 255, 255, 0.05)'}; color: ${isWhole ? '#3b82f6' : 'var(--text-muted)'};">${isWhole ? 'TRUE' : 'FALSE'}</span></td>
+      <td>${hasCustomLayup ? `<span class="badge" style="background-color: rgba(168, 85, 247, 0.15); color: #a855f7; cursor: help;" title="${customLayupTooltip.replace(/"/g, '&quot;')}">Custom ✓</span>` : '<span class="text-muted">NULL</span>'}</td>
+      <td>${row.fileName ? `<span style="font-family: 'JetBrains Mono', monospace; font-size: 11px;">${row.fileName}</span>` : '<span class="text-muted">NULL</span>'}</td>
     `;
     summaryRows.appendChild(tr);
   });
@@ -2354,6 +2361,12 @@ async function handleExportSqlite() {
     return;
   }
   
+  const exportBtn = document.getElementById('btn-export-sqlite');
+  if (exportBtn) {
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'Writing Database file...';
+  }
+
   try {
     const db = new state.SQL.Database();
     
@@ -2384,7 +2397,10 @@ async function handleExportSqlite() {
         final_length REAL,
         final_width REAL,
         raw_max_x REAL,
-        raw_max_y REAL
+        raw_max_y REAL,
+        use_whole_sheets INTEGER,
+        custom_layup TEXT,
+        file_name TEXT
       );
     `);
     
@@ -2406,8 +2422,9 @@ async function handleExportSqlite() {
     const insertMat = db.prepare(`
       INSERT INTO material_summary (
         material_name, machine_type, quantity, layup_required, faceUp_matl, core_substrate, faceDown_matl,
-        thickness, grain_direction, final_length, final_width, raw_max_x, raw_max_y
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        thickness, grain_direction, final_length, final_width, raw_max_x, raw_max_y,
+        use_whole_sheets, custom_layup, file_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `);
     
     const summaryRows = getConsolidatedMaterialRows();
@@ -2425,17 +2442,16 @@ async function handleExportSqlite() {
         r.final_length,
         r.final_width,
         r.raw_max_x,
-        r.raw_max_y
+        r.raw_max_y,
+        r.use_whole_sheets ? 1 : 0,
+        r.custom_layup ? (typeof r.custom_layup === 'string' ? r.custom_layup : JSON.stringify(r.custom_layup)) : null,
+        r.fileName || null
       ]);
     });
     insertMat.free();
     
     // Export database binary array
     const binaryArray = db.export();
-    
-    const exportBtn = document.getElementById('btn-export-sqlite');
-    exportBtn.disabled = true;
-    exportBtn.textContent = 'Writing Database file...';
     
     if (state.directoryHandle) {
       // Write database directly to local folder via File System Access API
@@ -2445,7 +2461,6 @@ async function handleExportSqlite() {
       await writable.close();
       
       showToast('Database Written', 'project_data.db successfully written directly to directory.', 'success');
-      exportBtn.disabled = false;
     } else if (isServerConnected) {
       // Convert Uint8Array to base64 to send via companion server JSON
       const base64Data = uint8ArrayToBase64(binaryArray);
@@ -2465,8 +2480,6 @@ async function handleExportSqlite() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.message || 'Write failed');
       }
-      
-      exportBtn.disabled = false;
     } else {
       // Standalone browser download fallback
       const blob = new Blob([binaryArray], { type: 'application/x-sqlite3' });
@@ -2481,17 +2494,26 @@ async function handleExportSqlite() {
         URL.revokeObjectURL(url);
       }, 200);
       showToast('Database Downloaded', 'project_data.db downloaded to your computer.', 'success');
-      exportBtn.disabled = false;
     }
     
-    exportBtn.innerHTML = `
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-      Write project_data.db to target directory
-    `;
-    
+    return { success: true, binaryArray, rowCount: summaryRows.length, db };
   } catch (e) {
     showToast('Database Write Failed', e.message || 'Check permissions or directory path.', 'error');
+    throw e;
+  } finally {
+    if (exportBtn) {
+      exportBtn.disabled = false;
+      exportBtn.innerHTML = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+        Write project_data.db to target directory
+      `;
+    }
   }
+}
+if (typeof window !== 'undefined') {
+  window.handleExportSqlite = handleExportSqlite;
+  window.updateDatabasePreview = updateDatabasePreview;
+  window.getConsolidatedMaterialRows = getConsolidatedMaterialRows;
 }
 
 // Convert Uint8Array to base64 string
