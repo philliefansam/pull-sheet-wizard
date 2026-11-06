@@ -353,16 +353,23 @@ input[type="text"]:focus, input[type="date"]:focus, select:focus {
   box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
+input[type="date"] {
+  cursor: pointer;
+}
+
 input[type="date"]::-webkit-calendar-picker-indicator {
   cursor: pointer;
-  filter: invert(0.8);
-  opacity: 0.8;
-  transition: opacity 0.2s ease, filter 0.2s ease;
+  filter: invert(0.85);
+  opacity: 0.9;
+  padding: 4px;
+  border-radius: 4px;
+  transition: opacity 0.2s ease, filter 0.2s ease, transform 0.15s ease;
 }
 
 input[type="date"]::-webkit-calendar-picker-indicator:hover {
   opacity: 1;
   filter: invert(1);
+  transform: scale(1.15);
 }
 
 .input-with-button {

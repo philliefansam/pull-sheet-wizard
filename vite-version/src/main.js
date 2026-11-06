@@ -471,6 +471,16 @@ function setupEventListeners() {
     };
     metaDateInput.addEventListener('change', handleDateChange);
     metaDateInput.addEventListener('input', handleDateChange);
+    // Open picker when clicking anywhere on the input field
+    metaDateInput.addEventListener('click', () => {
+      if (typeof metaDateInput.showPicker === 'function') {
+        try {
+          metaDateInput.showPicker();
+        } catch (err) {
+          // Ignore if already open or user gesture blocked
+        }
+      }
+    });
   }
   
   // Database Preview Tabs
